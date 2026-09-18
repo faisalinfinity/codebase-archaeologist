@@ -10,6 +10,7 @@ export default tseslint.config(
       '**/dist/**',
       '**/coverage/**',
       '**/pnpm-lock.yaml',
+      '**/next-env.d.ts',
     ],
   },
   eslint.configs.recommended,

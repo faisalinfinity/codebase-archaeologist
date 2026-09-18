@@ -1,8 +1,9 @@
-# Local infrastructure for Milestone 1+.
-# Postgres includes pgvector. Redis is reserved for BullMQ workers (Milestone 2).
+# Local infrastructure for Milestone 2+.
+# Postgres includes pgvector. Redis is required for the BullMQ index worker.
 #
 #   docker compose up -d
 #   pnpm db:migrate
+#   pnpm worker
 
 services:
   postgres:
