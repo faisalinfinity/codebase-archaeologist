@@ -1,4 +1,9 @@
-export { parseGitHubRepoInput, GitHubUrlError, type ParsedGitHubRepo } from './github-url';
+export {
+  parseGitHubRepoInput,
+  assertSafeOwnerRepo,
+  GitHubUrlError,
+  type ParsedGitHubRepo,
+} from './github-url';
 export {
   repositoryStatuses,
   indexJobStages,
@@ -11,5 +16,19 @@ export {
   createRepositoryBodySchema,
   type CreateRepositoryBody,
   type RepositoryDto,
+  type IndexJobDto,
+  type IndexJobProgress,
+  type SnapshotDto,
+  type IndexStatusDto,
   type AuthUserDto,
 } from './contracts';
+export { errorCodes, errorMessages, type ErrorCode } from './error-codes';
+export { getIngestionLimits, type IngestionLimits } from './limits';
+export {
+  ignoredDirectoryNames,
+  isIgnoredDirectoryName,
+  isIgnoredFilePath,
+  isSecretEnvFile,
+  pathHasIgnoredDirectory,
+  normalizeRelativePath,
+} from './ignore-rules';

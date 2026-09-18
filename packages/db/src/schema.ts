@@ -144,6 +144,7 @@ export const indexJobs = pgTable(
     errorCode: text('error_code'),
     errorMessage: text('error_message'),
     retryCount: integer('retry_count').notNull().default(0),
+    progressJson: jsonb('progress_json').$type<Record<string, unknown>>(),
     startedAt: timestamp('started_at', { withTimezone: true }),
     completedAt: timestamp('completed_at', { withTimezone: true }),
     ...timestamps,

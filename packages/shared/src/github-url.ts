@@ -11,18 +11,30 @@ export interface ParsedGitHubRepo {
   owner: string;
   repo: string;
   canonicalUrl: string;
+  cloneUrl: string;
 }
 
 const OWNER_REPO = /^[A-Za-z0-9_.-]+$/;
 
 /**
  * Validate and normalize a public GitHub repository URL or `owner/repo` shorthand.
- * Does not hit the network. Rejects git protocol, credentials, and non-GitHub hosts.
+ * Does not hit the network. Rejects git protocol, credentials, extra paths, and non-GitHub hosts.
  */
 export function parseGitHubRepoInput(input: string): ParsedGitHubRepo {
   const trimmed = input.trim();
   if (!trimmed) {
     throw new GitHubUrlError('Repository URL is required.');
+  }
+
+  if (/^git@/i.test(trimmed) || /^ssh:\/\//i.test(trimmed) || /^git:\/\//i.test(trimmed)) {
+    throw new GitHubUrlError('Only http(s) GitHub URLs are supported.');
+  }
+
+  const withoutScheme = trimmed.match(
+    /^(?:www\.)?github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/i,
+  );
+  if (withoutScheme?.[1] && withoutScheme[2] && !trimmed.includes('://')) {
+    return canonicalize(withoutScheme[1], withoutScheme[2]);
   }
 
   const shorthand = trimmed.match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/);
@@ -59,19 +71,37 @@ export function parseGitHubRepoInput(input: string): ParsedGitHubRepo {
     );
   }
 
+  if (parts.length > 2) {
+    throw new GitHubUrlError(
+      'URL must point at a repository root, e.g. https://github.com/owner/repo.',
+    );
+  }
+
   return canonicalize(owner, repoRaw.replace(/\.git$/i, ''));
+}
+
+export function assertSafeOwnerRepo(owner: string, repo: string): ParsedGitHubRepo {
+  return canonicalize(owner, repo);
 }
 
 function canonicalize(owner: string, repo: string): ParsedGitHubRepo {
   if (!OWNER_REPO.test(owner) || !OWNER_REPO.test(repo)) {
     throw new GitHubUrlError('Owner or repository name contains unsupported characters.');
   }
-  if (owner === '.' || owner === '..' || repo === '.' || repo === '..') {
+  if (
+    owner === '.' ||
+    owner === '..' ||
+    repo === '.' ||
+    repo === '..' ||
+    owner.startsWith('-') ||
+    repo.startsWith('-')
+  ) {
     throw new GitHubUrlError('Owner or repository name is invalid.');
   }
   return {
     owner,
     repo,
     canonicalUrl: `https://github.com/${owner}/${repo}`,
+    cloneUrl: `https://github.com/${owner}/${repo}.git`,
   };
 }
