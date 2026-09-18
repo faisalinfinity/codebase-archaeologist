@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./queue": "./src/queue/bullmq-index-queue.ts"
   },
   "scripts": {
     "lint": "eslint src",
@@ -14,9 +15,12 @@
   "dependencies": {
     "@archaeologist/db": "workspace:*",
     "@archaeologist/shared": "workspace:*",
-    "drizzle-orm": "^0.41.0"
+    "bullmq": "^5.52.2",
+    "drizzle-orm": "^0.41.0",
+    "ioredis": "^5.6.1"
   },
   "devDependencies": {
+    "@types/node": "^22.13.10",
     "typescript": "^5.8.2",
     "vitest": "^3.0.9"
   }

@@ -1,6 +1,12 @@
-import { DrizzleRepositoryStore, HttpError, RepositoryService } from '@archaeologist/api';
+import {
+  DrizzleRepositoryStore,
+  GitHubRepoClient,
+  HttpError,
+  NoopIndexQueue,
+  RepositoryService,
+} from '@archaeologist/api';
 
-export function createRepositoryService(): RepositoryService {
+export function requireDatabase(): void {
   if (!process.env.DATABASE_URL) {
     throw new HttpError(
       503,
@@ -8,5 +14,14 @@ export function createRepositoryService(): RepositoryService {
       'Database is not configured. Set DATABASE_URL and run migrations.',
     );
   }
-  return new RepositoryService(new DrizzleRepositoryStore());
+}
+
+export function createRepositoryService(): RepositoryService {
+  requireDatabase();
+  return new RepositoryService(
+    new DrizzleRepositoryStore(),
+    new GitHubRepoClient({ token: process.env.GITHUB_API_TOKEN }),
+    new NoopIndexQueue(),
+    process.env,
+  );
 }

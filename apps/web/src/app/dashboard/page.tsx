@@ -39,8 +39,8 @@ export default async function DashboardPage() {
         <div>
           <h1 className="font-serif text-3xl font-semibold tracking-tight">Repositories</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Indexing, chat, and impact analysis land in later milestones. You can already record a
-            public GitHub URL.
+            Paste a public GitHub URL. Indexing clones with read-only git and never executes
+            repository code.
           </p>
         </div>
         <Button asChild>
@@ -59,7 +59,7 @@ export default async function DashboardPage() {
           <CardHeader>
             <CardTitle>No repositories yet</CardTitle>
             <CardDescription>
-              Add a public GitHub URL to create a PENDING index job stub.
+              Add a public GitHub URL to create a repository and start indexing.
             </CardDescription>
           </CardHeader>
         </Card>

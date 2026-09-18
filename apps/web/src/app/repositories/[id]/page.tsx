@@ -4,10 +4,13 @@ import { notFound } from 'next/navigation';
 import { ForbiddenError, HttpError, NotFoundError } from '@archaeologist/api';
 
 import { DeleteRepositoryButton } from '@/components/delete-repository-button';
+import { IndexProgress } from '@/components/index-progress';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { createRepositoryService } from '@/lib/services';
 import { getSessionUser } from '@/lib/supabase/server';
+
+export const dynamic = 'force-dynamic';
 
 export default async function RepositoryDetailPage({
   params,
@@ -21,7 +24,8 @@ export default async function RepositoryDetailPage({
   }
 
   try {
-    const repo = await createRepositoryService().get(user, id);
+    const status = await createRepositoryService().getIndexStatus(user, id);
+    const repo = status.repository;
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-10">
         <div>
@@ -38,7 +42,7 @@ export default async function RepositoryDetailPage({
           <CardHeader>
             <CardTitle>Index status</CardTitle>
             <CardDescription>
-              {repo.status} — cloning and parsing are not implemented in Milestone 1.
+              Public clone is read-only. Repository scripts, installs, and builds never run.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3 text-sm text-muted-foreground">
@@ -47,10 +51,14 @@ export default async function RepositoryDetailPage({
               <a
                 className="text-foreground underline-offset-4 hover:underline"
                 href={repo.githubUrl}
+                target="_blank"
+                rel="noreferrer"
               >
                 {repo.githubUrl}
               </a>
             </p>
+            {repo.description ? <p>{repo.description}</p> : null}
+            <IndexProgress repositoryId={repo.id} initial={status} />
             <p>
               Chat, files, history, and dependencies routes will attach here in later milestones.
             </p>

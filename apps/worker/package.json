@@ -2,5 +2,26 @@
   "name": "@archaeologist/worker",
   "version": "0.1.0",
   "private": true,
-  "description": "Index worker placeholder — implemented in Milestone 2. Must never execute untrusted repository code."
+  "type": "module",
+  "description": "Index worker. Clones public GitHub repositories with read-only git. Never executes untrusted repository code.",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@archaeologist/api": "workspace:*",
+    "@archaeologist/db": "workspace:*",
+    "@archaeologist/ingestion": "workspace:*",
+    "@archaeologist/shared": "workspace:*",
+    "bullmq": "^5.52.2",
+    "ioredis": "^5.6.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.9"
+  }
 }

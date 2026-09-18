@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "pnpm --filter @archaeologist/web dev",
+    "worker": "pnpm --filter @archaeologist/worker start",
     "build": "pnpm --filter @archaeologist/web build",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "pnpm -r --if-present typecheck",
