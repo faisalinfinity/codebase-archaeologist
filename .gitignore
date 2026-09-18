@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build / generated
+dist/
+build/
+.next/
+out/
+coverage/
+.turbo/
+.vercel/
+*.tsbuildinfo
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs and temp
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/settings.json
+.idea/
+
+# Test artifacts
+playwright-report/
+test-results/
