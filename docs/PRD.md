@@ -54,9 +54,20 @@ Foundation only:
 - Minimal landing shell and repository CRUD **stubs** that compile.
 - `.env.example` with placeholders, no real secrets.
 
-## Milestone 1 — out of scope
+## Milestone 2 (this implementation) — in scope
 
-Tree-sitter, embeddings, RAG, chat streaming, workers cloning repos, GitHub ingestion, BYOK encryption, impact analysis, Vercel production deploy.
+Repository ingestion:
+
+- Validate/normalize public GitHub URLs.
+- Create per-user repository records; reuse if already added.
+- Fetch GitHub metadata; fail clearly on 404, private, rate limit, too large.
+- Redis + BullMQ worker process.
+- Read-only git clone; file scan with ignore rules and safeguards.
+- Snapshot + `index_jobs` progress in API and UI.
+
+## Milestone 2 — out of scope
+
+Tree-sitter, embeddings, RAG, chat streaming, BYOK encryption, impact analysis, PR/issue ingestion, incremental re-index polish beyond first ingest.
 
 ## Functional requirements (full MVP, later milestones)
 

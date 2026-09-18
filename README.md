@@ -6,7 +6,7 @@ This is not generic chat-with-code. Answers are grounded in indexed source, Git 
 
 ## Current status
 
-**Milestone 1 — foundation.** Monorepo, docs, TypeScript tooling, PostgreSQL migrations, and Supabase Auth scaffolding. Repository CRUD is a compile-ready stub. Ingestion, embeddings, RAG, chat, and workers are intentionally out of scope for this milestone.
+**Milestone 2 — repository ingestion.** Submit a public GitHub URL, validate it, enqueue a BullMQ index job, clone with **read-only git** (never execute repository code), scan files with ignore/size/symlink guards, and persist a snapshot. Tree-sitter, embeddings, RAG, and chat are still out of scope.
 
 ## Architecture sketch
 
@@ -24,31 +24,33 @@ This is not generic chat-with-code. Answers are grounded in indexed source, Git 
                            v
                  +-------------------+
                  | packages/api      |
-                 | (service layer)   |
                  | Auth, repo mgmt   |
-                 | (chat later)      |
+                 | GitHub metadata   |
+                 | enqueue index job |
                  +---------+---------+
                            |
              +-------------+---------------+
              |             |               |
              v             v               v
-       PostgreSQL        Redis         Object Storage
-       + pgvector       BullMQ          (optional)
-       packages/db      (Milestone 2)   (later)
+       PostgreSQL        Redis         Index worker
+       + pgvector       BullMQ         apps/worker
+       packages/db                     packages/ingestion
 ```
 
-Next.js route handlers call `packages/api`. The API can later move to a standalone Fastify/NestJS process without rewriting domain logic. Workers (clone/parse/embed) will be a separate app; they must **never execute untrusted repository code**.
+Next.js route handlers call `packages/api`. The worker is a separate Node process. It must **never execute untrusted repository code**.
 
 ## Monorepo
 
-| Path              | Role                                            |
-| ----------------- | ----------------------------------------------- |
-| `apps/web`        | Next.js App Router UI + thin route handlers     |
-| `packages/api`    | Domain services (auth, repositories)            |
-| `packages/db`     | Drizzle schema, SQL migrations, Postgres client |
-| `packages/shared` | Shared types, Zod schemas, GitHub URL parsing   |
-| `docs/`           | PRD, architecture, security                     |
-| `DECISIONS.md`    | Stack choices and deviations                    |
+| Path                 | Role                                            |
+| -------------------- | ----------------------------------------------- |
+| `apps/web`           | Next.js App Router UI + thin route handlers     |
+| `apps/worker`        | BullMQ index worker                             |
+| `packages/api`       | Domain services (auth, repositories, GitHub)    |
+| `packages/db`        | Drizzle schema, SQL migrations, Postgres client |
+| `packages/shared`    | Types, Zod schemas, GitHub URL, ignore rules    |
+| `packages/ingestion` | Safe git clone + file scanner                   |
+| `docs/`              | PRD, architecture, security, indexing           |
+| `DECISIONS.md`       | Stack choices and deviations                    |
 
 ## Local setup
 
@@ -56,7 +58,8 @@ Next.js route handlers call `packages/api`. The API can later move to a standalo
 
 - Node.js 22+
 - pnpm 10+ (`corepack enable`)
-- Docker (Postgres + Redis) **or** a Supabase project
+- Git (worker host)
+- Docker (Postgres + Redis) **or** a Supabase project + Redis
 - A Supabase project for Auth (email/password or magic link)
 
 ### 1. Install
@@ -71,18 +74,16 @@ pnpm install
 cp .env.example apps/web/.env.local
 ```
 
-Fill in `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` from the Supabase dashboard (Settings → API). Leave `DATABASE_URL` pointing at local Postgres, or use the Supabase connection string.
+Fill in `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Keep `DATABASE_URL` and `REDIS_URL` for local Compose.
 
-Do **not** put `SUPABASE_SERVICE_ROLE_KEY`, `DEMO_AI_API_KEY`, or `ENCRYPTION_KEY` in any `NEXT_PUBLIC_*` variable.
+Do **not** put `SUPABASE_SERVICE_ROLE_KEY`, `DEMO_AI_API_KEY`, `GITHUB_API_TOKEN`, or `ENCRYPTION_KEY` in any `NEXT_PUBLIC_*` variable.
 
-### 3. Database
+### 3. Database and Redis
 
 ```bash
 docker compose up -d
 pnpm db:migrate
 ```
-
-Migrations live in `packages/db/migrations` and are applied in filename order. They are safe to re-run (tracked in `schema_migrations`).
 
 ### 4. Auth provider (Supabase)
 
@@ -92,13 +93,23 @@ In the Supabase dashboard:
 2. Set the Site URL to `http://localhost:3000`.
 3. Add redirect URL `http://localhost:3000/auth/callback`.
 
-### 5. Run the app
+### 5. Run the app and worker
 
 ```bash
 pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Sign in at `/login`. Protected routes: `/dashboard`, `/repositories/*`.
+In another terminal:
+
+```bash
+export DATABASE_URL=postgresql://archaeologist:archaeologist@localhost:5432/archaeologist
+export REDIS_URL=redis://localhost:6379
+pnpm worker
+```
+
+Open [http://localhost:3000](http://localhost:3000). Sign in at `/login`. Add `https://github.com/octocat/Hello-World`. Watch `/repositories/[id]` until `READY`.
+
+Details: [docs/INDEXING.md](docs/INDEXING.md).
 
 ### Tooling
 
@@ -120,4 +131,4 @@ See [docs/SECURITY.md](docs/SECURITY.md).
 
 ## What is not built yet
 
-Tree-sitter, embeddings, RAG, chat streaming, workers that clone repos, GitHub ingestion, BYOK encryption, impact analysis, and production deploy. See [docs/PRD.md](docs/PRD.md).
+Tree-sitter, embeddings, RAG, chat streaming, BYOK encryption, impact analysis, PR/issue ingestion, and production deploy. See [docs/PRD.md](docs/PRD.md).

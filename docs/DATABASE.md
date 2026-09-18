@@ -13,7 +13,7 @@ pnpm db:migrate
 
 `DATABASE_URL` must point at a database where the connecting role can create extensions (or `vector` is already enabled).
 
-## Core tables (Milestone 1)
+## Core tables (Milestone 2)
 
 ### `users`
 
@@ -21,21 +21,27 @@ Application profile keyed by the Supabase Auth user UUID (`id`). Upserted on aut
 
 ### `repositories`
 
-One row per `(owner_user_id, github_owner, github_repo)`. Status enum matches the product lifecycle (`PENDING` … `READY` / `FAILED` / `STALE`). No clone happens in Milestone 1; creating a row also inserts an `index_jobs` stub.
+One row per `(owner_user_id, github_owner, github_repo)`. Status enum matches the product lifecycle (`PENDING` … `READY` / `FAILED` / `STALE`). Creating a row also inserts an `index_jobs` row and enqueues BullMQ when Redis is configured.
 
 ### `index_jobs`
 
-Job state machine including `stage`, `error_code`, `error_message`, `retry_count`, and timestamps. `snapshot_id` is nullable until snapshots exist.
+Job state machine including `stage`, `error_code`, `error_message`, `retry_count`, `progress_json`, and timestamps. `snapshot_id` is set once the clone SHA is known.
 
-## Sketched tables (created, unused)
+### `repository_snapshots`
+
+Exact commit SHA + branch of an index. Unique on `(repository_id, commit_sha)` so retries are idempotent.
+
+### `files`
+
+Path, language, size, SHA, binary/generated flags per snapshot. Milestone 2 writes scanned (non-skipped) files only. Content bodies are not stored; later milestones add chunks.
+
+## Sketched tables (created, unused writers)
 
 These exist so later milestones do not start from a blank schema. Writers are not implemented.
 
 | Table                                  | Purpose                                            |
 | -------------------------------------- | -------------------------------------------------- |
 | `repository_members`                   | Future sharing; MVP is owner-only                  |
-| `repository_snapshots`                 | Exact commit SHA of an index                       |
-| `files`                                | Path, language, size, SHA, binary/generated flags  |
 | `code_symbols`                         | AST symbols with parent/child                      |
 | `code_chunks`                          | Chunk text + `vector(1536)` embedding placeholder  |
 | `documents`                            | README/docs/config chunks + embedding              |

@@ -56,13 +56,13 @@ export function AddRepositoryForm({ initialUrl }: AddRepositoryFormProps) {
           name="githubUrl"
           value={githubUrl}
           onChange={(event) => setGithubUrl(event.target.value)}
-          placeholder="https://github.com/owner/repo"
+          placeholder="https://github.com/octocat/Hello-World"
           required
         />
       </div>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       <Button type="submit" disabled={!isValid} aria-busy={pending}>
-        {pending ? 'Saving…' : 'Save repository'}
+        {pending ? 'Starting index…' : 'Index repository'}
       </Button>
     </form>
   );

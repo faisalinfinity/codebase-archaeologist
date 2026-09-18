@@ -20,7 +20,7 @@
 
 ## Packages
 
-Import shared contracts from `@archaeologist/shared`, persistence from `@archaeologist/db`, and domain services from `@archaeologist/api`. Next.js pages and route handlers should stay thin.
+Import shared contracts from `@archaeologist/shared`, persistence from `@archaeologist/db`, domain services from `@archaeologist/api`, and clone/scan from `@archaeologist/ingestion`. Next.js pages and route handlers should stay thin. The worker is `apps/worker`.
 
 ## Docs
 

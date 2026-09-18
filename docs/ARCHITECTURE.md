@@ -77,37 +77,38 @@ Competitive value is the **join** across code, history, and graph.
                     Answer + citations
 ```
 
-### Milestone 1 mapping
+### Milestone 2 mapping
 
-| Spec box                      | Implementation                                     |
-| ----------------------------- | -------------------------------------------------- |
-| Next.js web app               | `apps/web`                                         |
-| API / AI gateway              | `packages/api` invoked from Next.js route handlers |
-| PostgreSQL + pgvector         | `packages/db` schema + SQL migrations              |
-| Redis / BullMQ / index worker | Compose service only; worker app not started       |
-| Tree-sitter, embeddings, chat | Not implemented                                    |
+| Spec box                      | Implementation                                             |
+| ----------------------------- | ---------------------------------------------------------- |
+| Next.js web app               | `apps/web`                                                 |
+| API / AI gateway              | `packages/api` invoked from Next.js route handlers         |
+| PostgreSQL + pgvector         | `packages/db` schema + SQL migrations                      |
+| Redis / BullMQ / index worker | `apps/worker` + Compose Redis; enqueue from `packages/api` |
+| Clone + file scan             | `packages/ingestion` (read-only git, ignore rules, limits) |
+| Tree-sitter, embeddings, chat | Not implemented                                            |
 
 Route handlers must not contain business rules. Services in `packages/api` must not import `next/*`, so a later Fastify (or NestJS) process can host the same layer.
 
-## Repository lifecycle (later milestones)
+## Repository lifecycle (Milestone 2)
 
 ```text
-Submit GitHub URL → validate/normalize → create or reuse repository
-  → queue index job → snapshot at commit SHA → clone (read-only git)
-  → scan + ignore rules → parse symbols/deps → index docs/config
-  → commits + public PRs/issues → AST chunks → embeddings
-  → persist → mark snapshot READY
+Submit GitHub URL → validate/normalize → GitHub metadata → create or reuse repository
+  → queue index job → clone (read-only git) → snapshot at commit SHA
+  → scan + ignore rules → persist files → mark snapshot READY
 ```
 
-Any stage can fail. Jobs are idempotent on `(repository_id, snapshot_id)`. Retry must not duplicate chunks.
+Parsing, embeddings, and GitHub issue/PR sync are later stages. Jobs are idempotent on `(repository_id, snapshot_id)` (unique snapshot SHA; file rows replaced per snapshot).
 
-Job stages: `PENDING → CLONING → SCANNING → PARSING → ANALYZING → GITHUB_SYNC → CHUNKING → EMBEDDING → FINALIZING → READY` (or `FAILED`).
+Job stages implemented now: `PENDING → CLONING → SCANNING → FINALIZING → READY` (or `FAILED`).
 
-Repository status (UI): `PENDING`, `CLONING`, `PARSING`, `EMBEDDING`, `FINALIZING`, `READY`, `FAILED`, `STALE`.
+Repository status (UI): `PENDING`, `CLONING`, `FINALIZING`, `READY`, `FAILED` (plus unused later values `PARSING` / `EMBEDDING` / `STALE`).
 
 ## Data
 
-See [DATABASE.md](./DATABASE.md). Core tables for Milestone 1: `users`, `repositories`, `index_jobs`. Remaining tables are sketched so ingestion/RAG can land without a rewrite.
+See [DATABASE.md](./DATABASE.md). Core tables: `users`, `repositories`, `index_jobs`, `repository_snapshots`, `files`. Remaining tables are sketched so RAG can land without a rewrite.
+
+Index job progress is stored in `index_jobs.progress_json`. See [INDEXING.md](./INDEXING.md).
 
 ## AuthN / AuthZ
 
@@ -133,6 +134,8 @@ Application code depends on interfaces (`AIProvider`, `EmbeddingProvider`), not 
 | `/settings/ai`                       | Providers / BYOK                         |
 
 Milestone 1 implements `/`, `/login`, `/auth/callback`, `/dashboard`, `/repositories/new`, `/repositories/[id]`, plus `/api/health` and `/api/repositories`.
+
+Milestone 2 adds `GET/POST /api/repositories/:id/index` and `GET /api/repositories/:id/index/status`, and live progress on the repository overview.
 
 ## CI / deploy
 

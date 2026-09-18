@@ -13,8 +13,8 @@ export default async function NewRepositoryPage({
       <div>
         <h1 className="font-serif text-3xl font-semibold tracking-tight">Add repository</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Public GitHub repositories only. The worker will clone later; this milestone stores the
-          record and a PENDING index job. Repository code is never executed.
+          Public GitHub repositories only. Submitting a URL validates it, queues a BullMQ job, and
+          clones with read-only git. Repository code is never executed.
         </p>
       </div>
       <AddRepositoryForm initialUrl={initialUrl} />

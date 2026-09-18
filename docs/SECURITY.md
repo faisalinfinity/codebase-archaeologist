@@ -19,9 +19,9 @@ MVP posture:
 
 > Read, parse, analyze, embed. Never execute.
 
-Git usage is restricted to the read-only operations required to ingest a snapshot (clone/fetch/checkout of a known SHA). Do not run hooks. Disable or ignore repository-provided hook scripts. Treat symlinks, archives, and path traversal as hostile.
+Git usage is restricted to the read-only operations required to ingest a snapshot (clone/fetch of a known SHA). Do not run hooks (`core.hooksPath=/dev/null`). Disable or ignore repository-provided hook scripts. Treat symlinks, archives, and path traversal as hostile.
 
-Required guards (enforced when ingestion exists; designed now):
+Required guards (enforced in Milestone 2 ingestion):
 
 - file-size and repository-size limits
 - job timeouts, memory and CPU limits

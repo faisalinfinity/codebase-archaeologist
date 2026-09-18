@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { requireUser, toPublicError, ValidationError } from '@archaeologist/api';
 
 import { createRepositoryService } from '@/lib/services';
+import { createRepositoryWriteService } from '@/lib/services-write';
 import { getSessionUser } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -27,8 +28,11 @@ export async function POST(request: Request) {
     } catch {
       throw new ValidationError('Invalid JSON body.');
     }
-    const repository = await createRepositoryService().create(user, json);
-    return NextResponse.json(repository, { status: 201 });
+    const result = await (await createRepositoryWriteService()).create(user, json);
+    return NextResponse.json(
+      { ...result.repository, alreadyExists: result.alreadyExists },
+      { status: result.alreadyExists ? 200 : 201 },
+    );
   } catch (error) {
     const { status, body } = toPublicError(error);
     return NextResponse.json(body, { status });
