@@ -1,0 +1,6 @@
+{
+  "name": "@archaeologist/worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Index worker placeholder — implemented in Milestone 2. Must never execute untrusted repository code."
+}

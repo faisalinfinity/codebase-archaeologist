@@ -1,0 +1,37 @@
+# Local infrastructure for Milestone 1+.
+# Postgres includes pgvector. Redis is reserved for BullMQ workers (Milestone 2).
+#
+#   docker compose up -d
+#   pnpm db:migrate
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: archaeologist
+      POSTGRES_PASSWORD: archaeologist
+      POSTGRES_DB: archaeologist
+    ports:
+      - '5432:5432'
+    volumes:
+      - archaeologist_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U archaeologist -d archaeologist']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  archaeologist_pg:
