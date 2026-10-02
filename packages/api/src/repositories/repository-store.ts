@@ -66,8 +66,48 @@ export interface InsertFileInput {
   language: string | null;
   sizeBytes: number;
   sha: string | null;
+  content: string | null;
   isBinary: boolean;
   isGenerated: boolean;
+  symbols: Array<{
+    name: string;
+    symbolType: string;
+    startLine: number;
+    endLine: number;
+    signature: string | null;
+  }>;
+  chunks: Array<{ content: string; startLine: number; endLine: number }>;
+  imports: string[];
+}
+
+export interface IndexedFile {
+  id: string;
+  path: string;
+  language: string | null;
+  sizeBytes: number;
+  content: string | null;
+  symbols: InsertFileInput['symbols'];
+  imports: Array<{ specifier: string; targetPath: string | null }>;
+}
+
+export interface IndexedChunk {
+  id: string;
+  snapshotId: string;
+  filePath: string;
+  content: string;
+  startLine: number;
+  endLine: number;
+  embedding: number[] | null;
+  embeddingModel: string | null;
+}
+
+export interface SearchCandidate {
+  chunkId: string;
+  filePath: string;
+  content: string;
+  startLine: number;
+  endLine: number;
+  score: number;
 }
 
 export interface RepositoryStore {
@@ -89,6 +129,35 @@ export interface RepositoryStore {
   upsertSnapshot(input: UpsertSnapshotInput): Promise<SnapshotDto>;
   getSnapshot(id: string): Promise<SnapshotDto | null>;
   getLatestSnapshot(repositoryId: string): Promise<SnapshotDto | null>;
-  replaceSnapshotFiles(snapshotId: string, files: InsertFileInput[]): Promise<void>;
+  getLatestReadySnapshot(repositoryId: string): Promise<SnapshotDto | null>;
+  replaceSnapshotFiles(
+    snapshotId: string,
+    files: AsyncIterable<InsertFileInput> | Iterable<InsertFileInput>,
+  ): Promise<void>;
   countFiles(snapshotId: string): Promise<number>;
+  countChunks(snapshotId: string): Promise<number>;
+  listFiles(
+    snapshotId: string,
+    limit: number,
+    offset: number,
+  ): Promise<Array<Pick<IndexedFile, 'id' | 'path' | 'language' | 'sizeBytes'>>>;
+  getFile(snapshotId: string, path: string): Promise<IndexedFile | null>;
+  getChunksForEmbedding(
+    snapshotId: string,
+    afterId: string | null,
+    limit: number,
+  ): Promise<Array<Pick<IndexedChunk, 'id' | 'content'>>>;
+  updateChunkEmbeddings(
+    snapshotId: string,
+    model: string,
+    items: Array<{ id: string; embedding: number[] }>,
+  ): Promise<void>;
+  hasEmbeddings(snapshotId: string, model: string): Promise<boolean>;
+  searchLexical(snapshotId: string, query: string, limit: number): Promise<SearchCandidate[]>;
+  searchSemantic(
+    snapshotId: string,
+    model: string,
+    vector: number[],
+    limit: number,
+  ): Promise<SearchCandidate[]>;
 }

@@ -12,7 +12,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@archaeologist/shared": "workspace:*"
+    "@archaeologist/shared": "workspace:*",
+    "typescript": "^5.8.2"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",

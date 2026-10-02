@@ -6,7 +6,7 @@ This is not generic chat-with-code. Answers are grounded in indexed source, Git 
 
 ## Current status
 
-**Milestone 2 — repository ingestion.** Submit a public GitHub URL, validate it, enqueue a BullMQ index job, clone with **read-only git** (never execute repository code), scan files with ignore/size/symlink guards, and persist a snapshot. Tree-sitter, embeddings, RAG, and chat are still out of scope.
+**Phase 4 — source retrieval.** Public repository ingestion stores bounded UTF-8 source, extracts TypeScript/JavaScript symbols and imports, and creates line-aware chunks. Owners can browse and keyword-search their indexed files. Set `OPENAI_API_KEY` on both web and worker to add server-side embeddings and hybrid search. Existing repositories must be re-indexed to populate source and embeddings. Chat and history analysis remain future phases.
 
 ## Architecture sketch
 
@@ -76,12 +76,13 @@ cp .env.example apps/web/.env.local
 
 Fill in `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Keep `DATABASE_URL` and `REDIS_URL` for local Compose.
 
-Do **not** put `SUPABASE_SERVICE_ROLE_KEY`, `DEMO_AI_API_KEY`, `GITHUB_API_TOKEN`, or `ENCRYPTION_KEY` in any `NEXT_PUBLIC_*` variable.
+Do **not** put `SUPABASE_SERVICE_ROLE_KEY`, `DEMO_AI_API_KEY`, `OPENAI_API_KEY`, `GITHUB_API_TOKEN`, or `ENCRYPTION_KEY` in any `NEXT_PUBLIC_*` variable. To enable semantic search, set `OPENAI_API_KEY` in `apps/web/.env.local` and export it in the worker terminal, then re-index the repository.
 
 ### 3. Database and Redis
 
 ```bash
 docker compose up -d
+export DATABASE_URL=postgresql://archaeologist:archaeologist@localhost:5432/archaeologist
 pnpm db:migrate
 ```
 
@@ -131,4 +132,4 @@ See [docs/SECURITY.md](docs/SECURITY.md).
 
 ## What is not built yet
 
-Tree-sitter, embeddings, RAG, chat streaming, BYOK encryption, impact analysis, PR/issue ingestion, and production deploy. See [docs/PRD.md](docs/PRD.md).
+Tree-sitter parsers for additional languages, AI answer generation and chat streaming, BYOK encryption, impact analysis, PR/issue ingestion, and production deploy. See [docs/PRD.md](docs/PRD.md).

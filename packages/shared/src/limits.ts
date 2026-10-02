@@ -4,6 +4,8 @@ export interface IngestionLimits {
   maxFileSizeBytes: number;
   cloneTimeoutMs: number;
   scanTimeoutMs: number;
+  maxEmbeddingChunks: number;
+  embeddingTimeoutMs: number;
 }
 
 const DEFAULTS: IngestionLimits = {
@@ -12,6 +14,8 @@ const DEFAULTS: IngestionLimits = {
   maxFileSizeBytes: 1 * 1024 * 1024,
   cloneTimeoutMs: 120_000,
   scanTimeoutMs: 120_000,
+  maxEmbeddingChunks: 2_000,
+  embeddingTimeoutMs: 600_000,
 };
 
 function readPositiveInt(value: string | undefined, fallback: number): number {
@@ -40,6 +44,8 @@ export function getIngestionLimits(
     maxFileSizeBytes: maxFileSizeMb * 1024 * 1024,
     cloneTimeoutMs: readPositiveInt(env.CLONE_TIMEOUT_MS, DEFAULTS.cloneTimeoutMs),
     scanTimeoutMs: readPositiveInt(env.SCAN_TIMEOUT_MS, DEFAULTS.scanTimeoutMs),
+    maxEmbeddingChunks: readPositiveInt(env.MAX_EMBED_CHUNKS, DEFAULTS.maxEmbeddingChunks),
+    embeddingTimeoutMs: readPositiveInt(env.EMBED_TIMEOUT_MS, DEFAULTS.embeddingTimeoutMs),
     ...overrides,
   };
 }

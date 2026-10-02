@@ -1,7 +1,11 @@
-import { and, count, desc, eq } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, isNotNull, sql } from 'drizzle-orm';
 
 import {
   files,
+  codeChunks,
+  codeSymbols,
+  dependencies,
+  documents,
   getDatabase,
   indexJobs,
   repositories,
@@ -20,12 +24,16 @@ import type {
   IndexJobPatch,
   InsertedRepository,
   InsertFileInput,
+  IndexedFile,
+  SearchCandidate,
   InsertRepositoryInput,
   RepositoryPatch,
   RepositoryStore,
   UpsertSnapshotInput,
   UpsertUserInput,
 } from './repository-store';
+import { assertEmbedding } from '../embeddings/embedding-provider';
+import { resolveImport } from './resolve-import';
 
 function toRepositoryDto(row: typeof repositories.$inferSelect): RepositoryDto {
   return {
@@ -289,6 +297,9 @@ export class DrizzleRepositoryStore implements RepositoryStore {
             ...(patch.progress.filesSeen !== undefined
               ? { filesSeen: patch.progress.filesSeen }
               : {}),
+            ...(patch.progress.chunksEmbedded !== undefined
+              ? { chunksEmbedded: patch.progress.chunksEmbedded }
+              : {}),
             ...(patch.progress.skippedReasons
               ? { skippedReasons: patch.progress.skippedReasons }
               : {}),
@@ -361,27 +372,141 @@ export class DrizzleRepositoryStore implements RepositoryStore {
     return row ? toSnapshotDto(row) : null;
   }
 
-  async replaceSnapshotFiles(snapshotId: string, filesToInsert: InsertFileInput[]): Promise<void> {
-    await this.db.delete(files).where(eq(files.snapshotId, snapshotId));
-    if (filesToInsert.length === 0) {
-      return;
-    }
-    const chunkSize = 200;
-    for (let i = 0; i < filesToInsert.length; i += chunkSize) {
-      const chunk = filesToInsert.slice(i, i + chunkSize);
-      await this.db.insert(files).values(
-        chunk.map((file) => ({
-          repositoryId: file.repositoryId,
-          snapshotId: file.snapshotId,
-          path: file.path,
-          language: file.language,
-          sizeBytes: file.sizeBytes,
-          sha: file.sha,
-          isBinary: file.isBinary,
-          isGenerated: file.isGenerated,
-        })),
-      );
-    }
+  async getLatestReadySnapshot(repositoryId: string): Promise<SnapshotDto | null> {
+    const rows = await this.db
+      .select()
+      .from(repositorySnapshots)
+      .where(
+        and(
+          eq(repositorySnapshots.repositoryId, repositoryId),
+          eq(repositorySnapshots.status, 'READY'),
+        ),
+      )
+      .orderBy(desc(repositorySnapshots.completedAt))
+      .limit(1);
+    return rows[0] ? toSnapshotDto(rows[0]) : null;
+  }
+
+  async replaceSnapshotFiles(
+    snapshotId: string,
+    filesToInsert: AsyncIterable<InsertFileInput> | Iterable<InsertFileInput>,
+  ): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.delete(documents).where(eq(documents.snapshotId, snapshotId));
+      await tx.delete(files).where(eq(files.snapshotId, snapshotId));
+      const ids = new Map<string, string>();
+      const pendingImports: Array<{
+        sourcePath: string;
+        sourceFileId: string;
+        repositoryId: string;
+        specifier: string;
+      }> = [];
+
+      const flush = async (batch: InsertFileInput[]): Promise<void> => {
+        if (batch.length === 0) return;
+        const rows = await tx
+          .insert(files)
+          .values(
+            batch.map((file) => ({
+              repositoryId: file.repositoryId,
+              snapshotId: file.snapshotId,
+              path: file.path,
+              language: file.language,
+              sizeBytes: file.sizeBytes,
+              sha: file.sha,
+              content: file.content,
+              isBinary: file.isBinary,
+              isGenerated: file.isGenerated,
+            })),
+          )
+          .returning({ id: files.id, path: files.path });
+        for (const row of rows) ids.set(row.path, row.id);
+        for (const file of batch) {
+          const fileId = ids.get(file.path);
+          if (!fileId) throw new Error('Indexed file row is missing.');
+          for (let i = 0; i < file.symbols.length; i += 100) {
+            await tx.insert(codeSymbols).values(
+              file.symbols.slice(i, i + 100).map((symbol) => ({
+                fileId,
+                repositoryId: file.repositoryId,
+                snapshotId,
+                name: symbol.name,
+                symbolType: symbol.symbolType,
+                startLine: symbol.startLine,
+                endLine: symbol.endLine,
+                signature: symbol.signature,
+              })),
+            );
+          }
+          for (let i = 0; i < file.chunks.length; i += 100) {
+            await tx.insert(codeChunks).values(
+              file.chunks.slice(i, i + 100).map((chunk) => ({
+                fileId,
+                repositoryId: file.repositoryId,
+                snapshotId,
+                chunkType: file.language === 'markdown' ? 'document' : 'source',
+                content: chunk.content,
+                startLine: chunk.startLine,
+                endLine: chunk.endLine,
+                language: file.language,
+              })),
+            );
+          }
+          if (
+            file.content !== null &&
+            (file.language === 'markdown' ||
+              /(^|\/)(Dockerfile|package\.json|tsconfig[^/]*\.json|\.env\.(example|sample|template))$/i.test(
+                file.path,
+              ))
+          ) {
+            await tx.insert(documents).values({
+              repositoryId: file.repositoryId,
+              snapshotId,
+              fileId,
+              title: file.path,
+              content: file.content,
+              docType: file.language === 'markdown' ? 'markdown' : 'configuration',
+            });
+          }
+          for (const specifier of file.imports) {
+            pendingImports.push({
+              sourcePath: file.path,
+              sourceFileId: fileId,
+              repositoryId: file.repositoryId,
+              specifier,
+            });
+          }
+        }
+      };
+
+      // A bounded batch keeps source text out of the worker heap after each insert.
+      let batch: InsertFileInput[] = [];
+      for await (const file of filesToInsert) {
+        batch.push(file);
+        if (batch.length === 20) {
+          await flush(batch);
+          batch = [];
+        }
+      }
+      await flush(batch);
+
+      const availablePaths = new Set(ids.keys());
+      for (let i = 0; i < pendingImports.length; i += 200) {
+        await tx.insert(dependencies).values(
+          pendingImports.slice(i, i + 200).map((entry) => {
+            const targetPath = resolveImport(entry.sourcePath, entry.specifier, availablePaths);
+            return {
+              repositoryId: entry.repositoryId,
+              snapshotId,
+              sourceFileId: entry.sourceFileId,
+              targetFileId: targetPath ? (ids.get(targetPath) ?? null) : null,
+              relationshipType: 'imports',
+              metadataJson: { specifier: entry.specifier },
+            };
+          }),
+        );
+      }
+    });
   }
 
   async countFiles(snapshotId: string): Promise<number> {
@@ -390,5 +515,184 @@ export class DrizzleRepositoryStore implements RepositoryStore {
       .from(files)
       .where(eq(files.snapshotId, snapshotId));
     return Number(rows[0]?.value ?? 0);
+  }
+
+  async countChunks(snapshotId: string): Promise<number> {
+    const rows = await this.db
+      .select({ value: count() })
+      .from(codeChunks)
+      .where(eq(codeChunks.snapshotId, snapshotId));
+    return Number(rows[0]?.value ?? 0);
+  }
+
+  async listFiles(
+    snapshotId: string,
+    limit: number,
+    offset: number,
+  ): Promise<Array<Pick<IndexedFile, 'id' | 'path' | 'language' | 'sizeBytes'>>> {
+    return this.db
+      .select({
+        id: files.id,
+        path: files.path,
+        language: files.language,
+        sizeBytes: files.sizeBytes,
+      })
+      .from(files)
+      .where(eq(files.snapshotId, snapshotId))
+      .orderBy(asc(files.path))
+      .limit(limit)
+      .offset(offset);
+  }
+
+  async getFile(snapshotId: string, filePath: string): Promise<IndexedFile | null> {
+    const rows = await this.db
+      .select()
+      .from(files)
+      .where(and(eq(files.snapshotId, snapshotId), eq(files.path, filePath)))
+      .limit(1);
+    const file = rows[0];
+    if (!file) return null;
+    const [symbols, imports] = await Promise.all([
+      this.db
+        .select({
+          name: codeSymbols.name,
+          symbolType: codeSymbols.symbolType,
+          startLine: codeSymbols.startLine,
+          endLine: codeSymbols.endLine,
+          signature: codeSymbols.signature,
+        })
+        .from(codeSymbols)
+        .where(eq(codeSymbols.fileId, file.id))
+        .orderBy(asc(codeSymbols.startLine)),
+      this.db
+        .select({ specifier: dependencies.metadataJson, targetPath: files.path })
+        .from(dependencies)
+        .leftJoin(files, eq(dependencies.targetFileId, files.id))
+        .where(eq(dependencies.sourceFileId, file.id)),
+    ]);
+    return {
+      id: file.id,
+      path: file.path,
+      language: file.language,
+      sizeBytes: file.sizeBytes,
+      content: file.content,
+      symbols,
+      imports: imports.map((row) => ({
+        specifier: typeof row.specifier?.specifier === 'string' ? row.specifier.specifier : '',
+        targetPath: row.targetPath,
+      })),
+    };
+  }
+
+  async getChunksForEmbedding(snapshotId: string, afterId: string | null, limit: number) {
+    const rows = await this.db
+      .select({ id: codeChunks.id, content: codeChunks.content })
+      .from(codeChunks)
+      .where(
+        and(
+          eq(codeChunks.snapshotId, snapshotId),
+          afterId ? gt(codeChunks.id, afterId) : undefined,
+        ),
+      )
+      .orderBy(asc(codeChunks.id))
+      .limit(limit);
+    return rows;
+  }
+
+  async updateChunkEmbeddings(
+    snapshotId: string,
+    model: string,
+    items: Array<{ id: string; embedding: number[] }>,
+  ): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      for (const item of items) {
+        assertEmbedding(item.embedding);
+        const rows = await tx
+          .update(codeChunks)
+          .set({
+            embedding: item.embedding,
+            embeddingModel: model,
+            embeddingUpdatedAt: new Date(),
+          })
+          .where(and(eq(codeChunks.id, item.id), eq(codeChunks.snapshotId, snapshotId)))
+          .returning({ id: codeChunks.id });
+        if (rows.length !== 1) throw new Error('Indexed chunk is missing.');
+      }
+    });
+  }
+
+  async hasEmbeddings(snapshotId: string, model: string): Promise<boolean> {
+    const rows = await this.db
+      .select({ id: codeChunks.id })
+      .from(codeChunks)
+      .where(
+        and(
+          eq(codeChunks.snapshotId, snapshotId),
+          eq(codeChunks.embeddingModel, model),
+          isNotNull(codeChunks.embedding),
+        ),
+      )
+      .limit(1);
+    return rows.length > 0;
+  }
+
+  async searchLexical(
+    snapshotId: string,
+    query: string,
+    limit: number,
+  ): Promise<SearchCandidate[]> {
+    const tsQuery = sql`websearch_to_tsquery('simple', ${query})`;
+    const rank = sql<number>`ts_rank_cd(to_tsvector('simple', ${codeChunks.content}), ${tsQuery})`;
+    const rows = await this.db
+      .select({
+        chunkId: codeChunks.id,
+        filePath: files.path,
+        content: codeChunks.content,
+        startLine: codeChunks.startLine,
+        endLine: codeChunks.endLine,
+        score: rank,
+      })
+      .from(codeChunks)
+      .innerJoin(files, eq(codeChunks.fileId, files.id))
+      .where(
+        and(
+          eq(codeChunks.snapshotId, snapshotId),
+          sql`to_tsvector('simple', ${codeChunks.content}) @@ ${tsQuery}`,
+        ),
+      )
+      .orderBy(desc(rank))
+      .limit(limit);
+    return rows;
+  }
+
+  async searchSemantic(
+    snapshotId: string,
+    model: string,
+    vector: number[],
+    limit: number,
+  ): Promise<SearchCandidate[]> {
+    assertEmbedding(vector);
+    const distance = sql<number>`${codeChunks.embedding} <=> ${JSON.stringify(vector)}::vector`;
+    const rows = await this.db
+      .select({
+        chunkId: codeChunks.id,
+        filePath: files.path,
+        content: codeChunks.content,
+        startLine: codeChunks.startLine,
+        endLine: codeChunks.endLine,
+        score: sql<number>`1 - (${distance})`,
+      })
+      .from(codeChunks)
+      .innerJoin(files, eq(codeChunks.fileId, files.id))
+      .where(
+        and(
+          eq(codeChunks.snapshotId, snapshotId),
+          eq(codeChunks.embeddingModel, model),
+          isNotNull(codeChunks.embedding),
+        ),
+      )
+      .orderBy(asc(distance))
+      .limit(limit);
+    return rows;
   }
 }

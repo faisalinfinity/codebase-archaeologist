@@ -38,8 +38,9 @@ export default function HomePage() {
             Excavate a codebase. Don’t chat with a blob of files.
           </h1>
           <p className="mt-6 max-w-2xl text-base leading-relaxed text-muted-foreground md:text-lg">
-            Paste a public GitHub URL. We index source, docs, git history, and issues so you can ask
-            what the system does, why it was written that way, and what a change would touch.
+            Paste a public GitHub URL to index source and docs. Browse files, symbols, and imports,
+            then search the indexed source. History, impact analysis, and AI answers are being
+            built.
           </p>
         </div>
         <RepoUrlForm />
@@ -48,7 +49,7 @@ export default function HomePage() {
             <Link href="/login">Analyze repository</Link>
           </Button>
           <Button asChild variant="outline">
-            <Link href="/login">Try demo</Link>
+            <Link href="/repositories/new">Add a repository</Link>
           </Button>
         </div>
       </section>

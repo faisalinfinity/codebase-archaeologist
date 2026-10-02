@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { ForbiddenError, NotFoundError } from '../errors';
+import { ForbiddenError, NotFoundError, ValidationError } from '../errors';
 import { errorFromCode } from '../errors';
 import type { GitHubRepoMetadata, GitHubRepositoryReader } from '../github/github-repo-client';
 import { NoopIndexQueue } from '../queue/index-queue';
 import { InMemoryRepositoryStore } from './in-memory-repository-store';
 import { RepositoryService } from './repository-service';
+import type { EmbeddingProvider } from '../embeddings/embedding-provider';
 
 const userA = { id: '11111111-1111-1111-1111-111111111111', email: 'a@example.com' };
 const userB = { id: '22222222-2222-2222-2222-222222222222', email: 'b@example.com' };
@@ -170,5 +171,109 @@ describe('RepositoryService', () => {
     const status = await service.getIndexStatus(userA, created.repository.id);
     expect(status.job?.stage).toBe('PENDING');
     expect(status.alreadyIndexed).toBe(false);
+  });
+
+  it('only serves source from an owned READY snapshot and rejects traversal', async () => {
+    const { service, store } = createService();
+    const created = await service.create(userA, { githubUrl: 'https://github.com/octocat/source' });
+    const id = created.repository.id;
+    const snapshot = await store.upsertSnapshot({
+      repositoryId: id,
+      commitSha: 'abc123',
+      branch: 'main',
+      status: 'READY',
+      completedAt: new Date(),
+    });
+    await store.replaceSnapshotFiles(snapshot.id, [
+      {
+        repositoryId: id,
+        snapshotId: snapshot.id,
+        path: 'src/index.ts',
+        language: 'typescript',
+        sizeBytes: 20,
+        sha: 'abc',
+        content: 'export const value = 1;',
+        isBinary: false,
+        isGenerated: false,
+        symbols: [],
+        chunks: [],
+        imports: [],
+      },
+    ]);
+
+    expect((await service.getIndexedFile(userA, id, 'src/index.ts')).file.content).toContain(
+      'value',
+    );
+    await expect(service.getIndexedFile(userB, id, 'src/index.ts')).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+    await expect(service.getIndexedFile(userA, id, '../.env')).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+    await store.upsertSnapshot({
+      repositoryId: id,
+      commitSha: 'newer',
+      branch: 'main',
+      status: 'SCANNING',
+    });
+    expect((await service.getIndexedFile(userA, id, 'src/index.ts')).snapshot.commitSha).toBe(
+      'abc123',
+    );
+  });
+
+  it('searches ready chunks and enforces repository ownership', async () => {
+    const { service, store, queue } = createService();
+    const created = await service.create(userA, {
+      githubUrl: 'https://github.com/octocat/searchable',
+    });
+    const snapshot = await store.upsertSnapshot({
+      repositoryId: created.repository.id,
+      commitSha: 'abc123',
+      branch: 'main',
+      status: 'READY',
+      completedAt: new Date(),
+    });
+    await store.replaceSnapshotFiles(snapshot.id, [
+      {
+        repositoryId: created.repository.id,
+        snapshotId: snapshot.id,
+        path: 'src/auth.ts',
+        language: 'typescript',
+        sizeBytes: 30,
+        sha: 'sha',
+        content: 'export function authenticate() {}',
+        isBinary: false,
+        isGenerated: false,
+        symbols: [],
+        imports: [],
+        chunks: [{ content: 'export function authenticate() {}', startLine: 1, endLine: 1 }],
+      },
+    ]);
+    const lexical = await service.search(userA, created.repository.id, 'authenticate');
+    expect(lexical.mode).toBe('lexical');
+    expect(lexical.results[0]).toMatchObject({ filePath: 'src/auth.ts', startLine: 1 });
+    await expect(
+      service.search(userB, created.repository.id, 'authenticate'),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+
+    const provider: EmbeddingProvider = {
+      model: 'fake',
+      dimensions: 1536,
+      async embed() {
+        const vector = Array<number>(1536).fill(0);
+        vector[0] = 1;
+        return [vector];
+      },
+    };
+    const chunk = (await store.getChunksForEmbedding(snapshot.id, null, 1))[0];
+    if (!chunk) throw new Error('Test chunk missing.');
+    const vector = Array<number>(1536).fill(0);
+    vector[0] = 1;
+    await store.updateChunkEmbeddings(snapshot.id, 'fake', [{ id: chunk.id, embedding: vector }]);
+    const hybridService = new RepositoryService(store, new FakeGitHub(), queue, {}, provider);
+    const hybrid = await hybridService.search(userA, created.repository.id, 'authenticate');
+    expect(hybrid.mode).toBe('hybrid');
+    expect(hybrid.results).toHaveLength(1);
+    expect(hybrid.results[0]?.githubUrl).toContain('/blob/abc123/src/auth.ts#L1');
   });
 });

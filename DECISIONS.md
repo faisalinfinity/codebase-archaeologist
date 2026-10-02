@@ -51,7 +51,7 @@ Server-only names (`DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, future `DEMO_AI_
 
 ## Embedding dimensions
 
-`code_chunks.embedding` and `documents.embedding` are `vector(1536)` as a **placeholder** matching a common OpenAI embedding width. The spec forbids assuming one embedding model forever. Milestone 4 must introduce an embedding-provider abstraction and may alter this column (new table, or per-model dimensions). Do not treat 1536 as a product contract.
+`code_chunks.embedding` and `documents.embedding` are `vector(1536)`. Phase 4 adds an embedding-provider interface and uses 1,536-dimensional OpenAI output. The spec forbids assuming one embedding model forever; supporting a different width requires a migration. Do not treat 1536 as a product contract.
 
 ## Deferred (explicitly not Milestone 1)
 
@@ -71,3 +71,23 @@ Server-only names (`DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, future `DEMO_AI_
 | GitHub metadata | REST `GET /repos/{owner}/{repo}`               | Maps 404, private, rate limit, and size. Optional `GITHUB_API_TOKEN` (server/worker only).                                                            |
 | After scan      | Snapshot `READY`                               | Tree-sitter/embed/GitHub sync are skipped on purpose. Job progress text says so.                                                                      |
 | Queue missing   | `NoopIndexQueue` when `REDIS_URL` unset        | Creates PENDING jobs so the web app still starts in CI. Worker + Redis required for live progress.                                                    |
+
+## Phase 3 — source intelligence first slice
+
+| Concern        | Choice                               | Notes                                                                                                                       |
+| -------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| Source storage | Nullable `files.content`             | Max 1 MiB per accepted file by default; invalid UTF-8 remains metadata-only. Existing snapshots require re-indexing.        |
+| Parser         | TypeScript compiler API              | Parses JavaScript and TypeScript without executing repository code. Other languages need dedicated parsers in later slices. |
+| Chunks         | At most 12,000 characters            | Preserve exact source text and line ranges; Phase 4 embeds bounded segments of each chunk.                                  |
+| Imports        | File-level edges                     | Resolve relative imports among indexed files; retain unresolved/external specifiers as evidence.                            |
+| Viewer         | Authenticated server-rendered routes | Repository ownership is checked before listing or reading a source file.                                                    |
+
+## Phase 4 — retrieval
+
+| Concern         | Choice                                                | Notes                                                                                                                                                    |
+| --------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Keyword search  | PostgreSQL `tsvector` with the `simple` configuration | Available for every ready source snapshot without an AI key.                                                                                             |
+| Semantic search | Optional server-side OpenAI embeddings                | `text-embedding-3-small` by default; `text-embedding-3-large` is also accepted with `dimensions: 1536`. The key stays in server and worker environments. |
+| Vector width    | Existing `vector(1536)` column                        | Provider interface allows replacement; another vector width needs a schema/index migration.                                                              |
+| Ranking         | Reciprocal rank fusion                                | Combines top keyword and vector hits without comparing their raw score scales.                                                                           |
+| Failure         | Embedding failure marks an index job failed           | Keeps incomplete snapshots out of search. Query-time semantic failures fall back to keyword results.                                                     |

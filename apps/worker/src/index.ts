@@ -7,6 +7,7 @@ import {
   INDEX_JOB_NAME,
   INDEX_QUEUE_NAME,
   type IndexJobPayload,
+  configuredEmbeddingProvider,
 } from '@archaeologist/api';
 import { clonePublicGitHubRepo, scanRepositoryTree } from '@archaeologist/ingestion';
 
@@ -49,6 +50,7 @@ async function main(): Promise<void> {
         scan: scanRepositoryTree,
         env: process.env,
         github,
+        embeddingProvider: configuredEmbeddingProvider(process.env),
       });
     },
     {

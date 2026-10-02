@@ -86,7 +86,9 @@ Competitive value is the **join** across code, history, and graph.
 | PostgreSQL + pgvector         | `packages/db` schema + SQL migrations                      |
 | Redis / BullMQ / index worker | `apps/worker` + Compose Redis; enqueue from `packages/api` |
 | Clone + file scan             | `packages/ingestion` (read-only git, ignore rules, limits) |
-| Tree-sitter, embeddings, chat | Not implemented                                            |
+| Source parsing / retrieval    | TypeScript/JavaScript parsing and indexed keyword search   |
+| Optional embeddings           | Server-side provider and pgvector cosine search            |
+| Chat / history intelligence   | Not implemented                                            |
 
 Route handlers must not contain business rules. Services in `packages/api` must not import `next/*`, so a later Fastify (or NestJS) process can host the same layer.
 
@@ -98,25 +100,27 @@ Submit GitHub URL → validate/normalize → GitHub metadata → create or reuse
   → scan + ignore rules → persist files → mark snapshot READY
 ```
 
-Parsing, embeddings, and GitHub issue/PR sync are later stages. Jobs are idempotent on `(repository_id, snapshot_id)` (unique snapshot SHA; file rows replaced per snapshot).
+GitHub issue/PR sync and AI answers are later stages. Jobs are idempotent on `(repository_id, snapshot_id)` (unique snapshot SHA; file rows replaced per snapshot).
 
-Job stages implemented now: `PENDING → CLONING → SCANNING → FINALIZING → READY` (or `FAILED`).
+Job stages implemented now: `PENDING → CLONING → SCANNING → PARSING → ANALYZING → [EMBEDDING] → FINALIZING → READY` (or `FAILED`).
 
-Repository status (UI): `PENDING`, `CLONING`, `FINALIZING`, `READY`, `FAILED` (plus unused later values `PARSING` / `EMBEDDING` / `STALE`).
+Repository status (UI): `PENDING`, `CLONING`, `PARSING`, optional `EMBEDDING`, `FINALIZING`, `READY`, `FAILED` (`STALE` is reserved for later updates).
 
 ## Data
 
 See [DATABASE.md](./DATABASE.md). Core tables: `users`, `repositories`, `index_jobs`, `repository_snapshots`, `files`. Remaining tables are sketched so RAG can land without a rewrite.
 
-Index job progress is stored in `index_jobs.progress_json`. See [INDEXING.md](./INDEXING.md).
+Index job progress is stored in `index_jobs.progress_json`. The Phase 3 slice stores bounded source text and TypeScript/JavaScript syntax facts in the existing intelligence tables. See [INDEXING.md](./INDEXING.md).
+
+Phase 4 adds PostgreSQL full-text search over chunks. When a server-side embedding key is configured, the worker stores 1,536-dimensional vectors and the repository search service merges full-text and cosine-similarity results. The search API remains owner-scoped and returns commit-pinned source links.
 
 ## AuthN / AuthZ
 
 Supabase Auth issues a session cookie. Next.js middleware gates `/dashboard` and `/repositories`. API helpers call `requireUser()` then load rows **by `owner_user_id`**. IDs from the client are never trusted without an ownership check.
 
-## AI providers (later)
+## AI providers
 
-Application code depends on interfaces (`AIProvider`, `EmbeddingProvider`), not a single vendor SDK. Demo AI reads `DEMO_AI_API_KEY` on the server. BYOK is encrypted at rest (`ENCRYPTION_KEY` server-side). Custom OpenAI-compatible base URLs need SSRF controls before they are enabled.
+Phase 4 uses an `EmbeddingProvider` interface with an optional server-side OpenAI adapter. `AIProvider`, Demo AI, BYOK encryption, and custom compatible endpoints are later work. Custom base URLs need SSRF controls before they are enabled.
 
 ## Frontend surfaces (planned)
 
@@ -127,7 +131,8 @@ Application code depends on interfaces (`AIProvider`, `EmbeddingProvider`), not 
 | `/dashboard`                         | Repository list                          |
 | `/repositories/new`                  | Add repository                           |
 | `/repositories/[id]`                 | Overview                                 |
-| `/repositories/[id]/chat`            | Repository-aware chat                    |
+| `/repositories/[id]/search`          | Source retrieval                         |
+| `/repositories/[id]/chat`            | Repository-aware chat (later)            |
 | `/repositories/[id]/files/[...path]` | Code viewer                              |
 | `/repositories/[id]/history`         | Commits                                  |
 | `/repositories/[id]/dependencies`    | Graph                                    |
@@ -136,6 +141,8 @@ Application code depends on interfaces (`AIProvider`, `EmbeddingProvider`), not 
 Milestone 1 implements `/`, `/login`, `/auth/callback`, `/dashboard`, `/repositories/new`, `/repositories/[id]`, plus `/api/health` and `/api/repositories`.
 
 Milestone 2 adds `GET/POST /api/repositories/:id/index` and `GET /api/repositories/:id/index/status`, and live progress on the repository overview.
+
+Phases 3–4 add source browsing, `GET /api/repositories/:id/search`, and indexed retrieval.
 
 ## CI / deploy
 

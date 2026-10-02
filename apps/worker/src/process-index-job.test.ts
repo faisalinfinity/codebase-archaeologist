@@ -5,6 +5,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import { InMemoryRepositoryStore } from '@archaeologist/api';
+import type { EmbeddingProvider } from '@archaeologist/api';
 import { IngestionError } from '@archaeologist/ingestion';
 import { describe, expect, it } from 'vitest';
 
@@ -57,6 +58,13 @@ describe('processIndexJob', () => {
     const paths = files.map((file) => file.path).sort();
     expect(paths).toEqual(['README.md', 'src/app.ts']);
     expect(job?.progress?.filesIndexed).toBe(2);
+    const sourceFile = await store.getFile(snapshot?.id ?? '', 'src/app.ts');
+    expect(sourceFile?.content).toBe('export function run() { return 1; }\n');
+    expect(sourceFile?.symbols).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'run', symbolType: 'function', startLine: 1 }),
+      ]),
+    );
   });
 
   it('marks the job FAILED with INDEX_TIMEOUT and does not leave status ambiguous', async () => {
@@ -92,5 +100,102 @@ describe('processIndexJob', () => {
     expect(job?.status).toBe('FAILED');
     expect(job?.errorCode).toBe('INDEX_TIMEOUT');
     expect(job?.stage).toBe('CLONING');
+  });
+
+  it('embeds indexed chunks when a provider is configured', async () => {
+    const source = await initLocalGitRepo();
+    const store = new InMemoryRepositoryStore();
+    const inserted = await store.insertRepository({
+      ownerUserId: '11111111-1111-1111-1111-111111111111',
+      githubOwner: 'octocat',
+      githubRepo: 'Hello-World',
+      githubUrl: 'https://github.com/octocat/Hello-World',
+      defaultBranch: 'main',
+    });
+    const provider: EmbeddingProvider = {
+      model: 'fake',
+      dimensions: 1536,
+      async embed(inputs) {
+        return inputs.map(() => {
+          const vector = Array<number>(1536).fill(0);
+          vector[0] = 1;
+          return vector;
+        });
+      },
+    };
+    await processLocalFixture(
+      { repositoryId: inserted.repository.id, jobId: inserted.job.id },
+      store,
+      source,
+      provider,
+    );
+    const job = await store.getJob(inserted.job.id);
+    expect(job?.status).toBe('READY');
+    expect(job?.progress?.chunksEmbedded).toBeGreaterThan(0);
+    expect(await store.hasEmbeddings(job?.snapshotId ?? '', 'fake')).toBe(true);
+  });
+
+  it('keeps keyword search ready when the embedding cost cap is exceeded', async () => {
+    const source = await initLocalGitRepo();
+    const store = new InMemoryRepositoryStore();
+    const inserted = await store.insertRepository({
+      ownerUserId: '11111111-1111-1111-1111-111111111111',
+      githubOwner: 'octocat',
+      githubRepo: 'Hello-World',
+      githubUrl: 'https://github.com/octocat/Hello-World',
+      defaultBranch: 'main',
+    });
+    let calls = 0;
+    const provider: EmbeddingProvider = {
+      model: 'fake',
+      dimensions: 1536,
+      async embed() {
+        calls += 1;
+        return [];
+      },
+    };
+    await processLocalFixture(
+      { repositoryId: inserted.repository.id, jobId: inserted.job.id },
+      store,
+      source,
+      provider,
+      { MAX_EMBED_CHUNKS: '1' },
+    );
+    const job = await store.getJob(inserted.job.id);
+    expect(job?.status).toBe('READY');
+    expect(job?.progress?.message).toContain('configured chunk limit');
+    expect(calls).toBe(0);
+  });
+
+  it('does not expose an incomplete snapshot when embeddings fail', async () => {
+    const source = await initLocalGitRepo();
+    const store = new InMemoryRepositoryStore();
+    const inserted = await store.insertRepository({
+      ownerUserId: '11111111-1111-1111-1111-111111111111',
+      githubOwner: 'octocat',
+      githubRepo: 'Hello-World',
+      githubUrl: 'https://github.com/octocat/Hello-World',
+      defaultBranch: 'main',
+    });
+    const provider: EmbeddingProvider = {
+      model: 'fake',
+      dimensions: 1536,
+      async embed() {
+        throw new Error('provider unavailable');
+      },
+    };
+    await expect(
+      processLocalFixture(
+        { repositoryId: inserted.repository.id, jobId: inserted.job.id },
+        store,
+        source,
+        provider,
+      ),
+    ).rejects.toThrow('provider unavailable');
+    const job = await store.getJob(inserted.job.id);
+    expect(job?.status).toBe('FAILED');
+    expect(job?.stage).toBe('EMBEDDING');
+    expect(await store.getLatestReadySnapshot(inserted.repository.id)).toBeNull();
+    expect((await store.getSnapshot(job?.snapshotId ?? ''))?.status).toBe('FAILED');
   });
 });

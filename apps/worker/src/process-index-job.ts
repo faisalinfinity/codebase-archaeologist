@@ -1,12 +1,21 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { lstat, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 import type { GitHubRepositoryReader, RepositoryStore } from '@archaeologist/api';
-import { assertPublicSize, HttpError } from '@archaeologist/api';
+import {
+  assertPublicSize,
+  embedChunks,
+  EMBEDDING_DIMENSIONS,
+  HttpError,
+  type EmbeddingProvider,
+} from '@archaeologist/api';
 import {
   cloneGitRemote,
+  analyzeSource,
   IngestionError,
+  isInsideRoot,
   scanRepositoryTree,
   type CloneOptions,
   type CloneResult,
@@ -23,6 +32,7 @@ export interface ProcessIndexJobDeps {
   clone: (options: CloneOptions) => Promise<CloneResult>;
   scan: typeof scanRepositoryTree;
   github?: GitHubRepositoryReader;
+  embeddingProvider?: EmbeddingProvider | null;
   env?: Record<string, string | undefined>;
 }
 
@@ -39,7 +49,7 @@ function asErrorCode(error: unknown): { code: ErrorCode; message: string } {
   }
   return {
     code: 'INDEX_FAILED',
-    message: 'Indexing failed while cloning or scanning the repository.',
+    message: 'Indexing failed. Check the worker and retry the repository.',
   };
 }
 
@@ -97,10 +107,31 @@ async function failJob(
   }
 }
 
-/**
- * Milestone 2 processor: clone (read-only git) → scan → snapshot + files → READY.
- * Later stages (parse, embed, GitHub sync) are intentionally skipped.
- */
+async function readIndexedText(
+  rootReal: string,
+  relative: string,
+  expectedSha: string | null,
+  maxBytes: number,
+): Promise<string | null> {
+  const absolute = path.resolve(rootReal, relative);
+  if (!isInsideRoot(rootReal, absolute)) return null;
+  try {
+    const stats = await lstat(absolute);
+    if (!stats.isFile() || stats.size > maxBytes) return null;
+    const resolved = await realpath(absolute);
+    if (!isInsideRoot(rootReal, resolved)) return null;
+    const bytes = await readFile(absolute);
+    if (bytes.length > maxBytes) return null;
+    if (bytes.includes(0)) return null;
+    if (expectedSha && createHash('sha256').update(bytes).digest('hex') !== expectedSha)
+      return null;
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+/** Clone, scan, parse bounded source, and persist a source-backed snapshot. */
 export async function processIndexJob(
   payload: IndexJobPayload,
   deps: ProcessIndexJobDeps,
@@ -111,6 +142,7 @@ export async function processIndexJob(
   if (!repository || !job) {
     throw new Error('Index job or repository is missing.');
   }
+  const repositoryId = repository.id;
 
   await deps.store.updateJob(payload.jobId, {
     status: 'CLONING',
@@ -124,6 +156,11 @@ export async function processIndexJob(
   let snapshotId: string | undefined;
 
   try {
+    if (deps.embeddingProvider && deps.embeddingProvider.dimensions !== EMBEDDING_DIMENSIONS) {
+      throw new Error(
+        `Configured embedding provider must return ${EMBEDDING_DIMENSIONS} dimensions.`,
+      );
+    }
     logSafe({
       event: 'cloning',
       repository_id: payload.repositoryId,
@@ -173,26 +210,104 @@ export async function processIndexJob(
     const scan = await deps.scan(cloned.destDir, limits);
 
     const indexedFiles = scan.files.filter((file) => !file.skipped);
-    await deps.store.replaceSnapshotFiles(
-      snapshot.id,
-      indexedFiles.map((file) => ({
-        repositoryId: repository.id,
-        snapshotId: snapshot.id,
-        path: file.path,
-        language: file.language,
-        sizeBytes: file.sizeBytes,
-        sha: file.sha,
-        isBinary: file.isBinary,
-        isGenerated: file.isGenerated,
-      })),
+    const sourceRoot = await realpath(cloned.destDir);
+    await deps.store.updateJob(payload.jobId, {
+      status: 'PARSING',
+      stage: 'PARSING',
+      progress: {
+        message: 'Extracting source symbols, chunks, and imports.',
+        filesIndexed: indexedFiles.length,
+      },
+    });
+    await deps.store.updateRepository(payload.repositoryId, { status: 'PARSING' });
+    async function* analyzedFiles() {
+      for (const file of indexedFiles) {
+        const content = await readIndexedText(
+          sourceRoot,
+          file.path,
+          file.sha,
+          limits.maxFileSizeBytes,
+        );
+        const analysis =
+          content === null
+            ? { symbols: [], chunks: [], imports: [] }
+            : analyzeSource(file.path, content);
+        yield {
+          repositoryId,
+          snapshotId: snapshot.id,
+          path: file.path,
+          language: file.language,
+          sizeBytes: file.sizeBytes,
+          sha: file.sha,
+          content,
+          isBinary: file.isBinary,
+          isGenerated: file.isGenerated,
+          ...analysis,
+        };
+      }
+    }
+    await deps.store.updateJob(payload.jobId, {
+      status: 'ANALYZING',
+      stage: 'ANALYZING',
+      progress: {
+        message: 'Saving searchable source and dependency facts.',
+        filesIndexed: indexedFiles.length,
+      },
+    });
+    await deps.store.replaceSnapshotFiles(snapshot.id, analyzedFiles());
+
+    let chunksEmbedded = 0;
+    const totalChunks = await deps.store.countChunks(snapshot.id);
+    const embeddingSkipped = Boolean(
+      deps.embeddingProvider && totalChunks > limits.maxEmbeddingChunks,
     );
+    if (deps.embeddingProvider && !embeddingSkipped) {
+      await deps.store.updateJob(payload.jobId, {
+        status: 'EMBEDDING',
+        stage: 'EMBEDDING',
+        progress: {
+          message: 'Generating source embeddings.',
+          filesIndexed: indexedFiles.length,
+          chunksEmbedded,
+        },
+      });
+      await deps.store.updateRepository(payload.repositoryId, { status: 'EMBEDDING' });
+      let afterId: string | null = null;
+      const embeddingStartedAt = Date.now();
+      for (;;) {
+        if (Date.now() - embeddingStartedAt > limits.embeddingTimeoutMs) {
+          throw new IngestionError('INDEX_TIMEOUT', 'Embedding the repository timed out.');
+        }
+        const batch = await deps.store.getChunksForEmbedding(snapshot.id, afterId, 8);
+        if (batch.length === 0) break;
+        const vectors = await embedChunks(
+          deps.embeddingProvider,
+          batch.map((chunk) => chunk.content),
+        );
+        await deps.store.updateChunkEmbeddings(
+          snapshot.id,
+          deps.embeddingProvider.model,
+          batch.map((chunk, index) => ({ id: chunk.id, embedding: vectors[index] ?? [] })),
+        );
+        chunksEmbedded += batch.length;
+        afterId = batch[batch.length - 1]?.id ?? null;
+        await deps.store.updateJob(payload.jobId, {
+          progress: {
+            message: 'Generating source embeddings.',
+            filesIndexed: indexedFiles.length,
+            chunksEmbedded,
+          },
+        });
+      }
+    }
 
     await deps.store.updateJob(payload.jobId, {
       status: 'FINALIZING',
       stage: 'FINALIZING',
       progress: {
-        message: 'Saving snapshot. Parsing and embeddings are not part of Milestone 2.',
+        message: 'Saving searchable source index.',
         filesIndexed: scan.filesIndexed,
+        chunksEmbedded,
         filesSkipped: scan.filesSkipped,
         filesSeen: scan.filesSeen,
         skippedReasons: scan.skippedReasons,
@@ -215,8 +330,11 @@ export async function processIndexJob(
       errorCode: null,
       errorMessage: null,
       progress: {
-        message: `Indexed ${scan.filesIndexed} files. Skipped ${scan.filesSkipped}.`,
+        message: embeddingSkipped
+          ? `Indexed ${scan.filesIndexed} files. Keyword search ready; semantic indexing exceeded the configured chunk limit.`
+          : `Indexed ${scan.filesIndexed} files. ${chunksEmbedded > 0 ? 'Semantic and keyword' : 'Keyword'} search ready.`,
         filesIndexed: scan.filesIndexed,
+        chunksEmbedded,
         filesSkipped: scan.filesSkipped,
         filesSeen: scan.filesSeen,
         skippedReasons: scan.skippedReasons,
@@ -250,6 +368,8 @@ export async function processLocalFixture(
   payload: IndexJobPayload,
   store: RepositoryStore,
   sourceGitDir: string,
+  embeddingProvider?: EmbeddingProvider,
+  env?: Record<string, string | undefined>,
 ): Promise<void> {
   await processIndexJob(payload, {
     store,
@@ -270,5 +390,7 @@ export async function processLocalFixture(
       };
     },
     scan: scanRepositoryTree,
+    embeddingProvider,
+    env,
   });
 }

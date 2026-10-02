@@ -1,4 +1,4 @@
-# Indexing (Milestone 2)
+# Indexing (Milestones 2–4)
 
 Milestone 2 implements SDLC Phase 4 / First Implementation Order steps 6–9: repository CRUD, GitHub URL validation, a real BullMQ worker, read-only clone, file scan, snapshot, and job progress.
 
@@ -14,11 +14,12 @@ Submit public GitHub URL
         → worker: CLONING (git clone --depth 1, hooks disabled)
         → create repository_snapshots at HEAD SHA
         → SCANNING (ignore rules, size limits, symlink/path guards)
-        → persist files
-        → FINALIZING → READY
+        → parse accepted text files and extract symbols/imports/chunks
+        → persist files, source text, documents, and import edges
+        → EMBEDDING (when configured) → FINALIZING → READY
 ```
 
-Parsing, embeddings, RAG, chat, PR/issue ingestion, and Tree-sitter are **not** in this milestone. After a successful scan the snapshot is marked READY so the ingest path is complete.
+The Phase 3 slice parses JavaScript and TypeScript with the TypeScript compiler API. It creates bounded chunks for all accepted UTF-8 text and stores Markdown and key configuration documents. Phase 4 adds indexed keyword search and optional embeddings. Set `OPENAI_API_KEY` on both web and worker, then re-index to enable hybrid retrieval. AI answers, chat, PR/issue ingestion, and parsers for other languages are still pending.
 
 ## Security
 
@@ -41,6 +42,8 @@ Skipped: `node_modules/`, `.git/`, `.next/`, `dist/`, `build/`, `coverage/`, `.c
 | `MAX_FILE_SIZE_MB`       | 1       |
 | `CLONE_TIMEOUT_MS`       | 120000  |
 | `SCAN_TIMEOUT_MS`        | 120000  |
+| `MAX_EMBED_CHUNKS`       | 2000    |
+| `EMBED_TIMEOUT_MS`       | 600000  |
 
 GitHub’s repository `size` field is treated as KiB.
 
@@ -54,7 +57,7 @@ GitHub’s repository `size` field is treated as KiB.
 | `GITHUB_RATE_LIMITED`  | GitHub 403/429 with remaining=0                 |
 | `REPOSITORY_TOO_LARGE` | Over `MAX_REPOSITORY_SIZE_MB`                   |
 | `INDEX_TIMEOUT`        | Clone or scan exceeded timeout                  |
-| `INDEX_FAILED`         | Other clone/scan failure                        |
+| `INDEX_FAILED`         | Other ingest or embedding failure               |
 | `REDIS_UNAVAILABLE`    | Queue enqueue failed                            |
 
 ## Local end-to-end
@@ -65,11 +68,13 @@ Requires Docker for Postgres + Redis, Git, a Supabase project for auth, and two 
 docker compose up -d
 cp .env.example apps/web/.env.local
 # fill NEXT_PUBLIC_SUPABASE_* and keep DATABASE_URL + REDIS_URL
+export DATABASE_URL=postgresql://archaeologist:archaeologist@localhost:5432/archaeologist
 pnpm db:migrate
 pnpm dev
 # other terminal:
 export DATABASE_URL=postgresql://archaeologist:archaeologist@localhost:5432/archaeologist
 export REDIS_URL=redis://localhost:6379
+# optional: export OPENAI_API_KEY in both terminals for semantic indexing/search
 pnpm worker
 ```
 
@@ -79,7 +84,7 @@ Sign in, add this small public fixture:
 https://github.com/octocat/Hello-World
 ```
 
-The repository page should move through `PENDING` → `CLONING` → `SCANNING` → `FINALIZING` → `READY` and show a commit SHA plus indexed file count.
+The repository page should move through `PENDING` → `CLONING` → `SCANNING` → `PARSING` → `ANALYZING` → optional `EMBEDDING` → `FINALIZING` → `READY` and show a commit SHA plus indexed file count. **Browse indexed files** opens source text and line-addressable symbols; **Search source** searches the ready snapshot.
 
 If `REDIS_URL` is unset, the API still creates a `PENDING` job but nothing runs until Redis and the worker are up. Use **Retry index** on the repository page after starting them.
 

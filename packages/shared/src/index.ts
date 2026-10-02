@@ -20,6 +20,8 @@ export {
   type IndexJobProgress,
   type SnapshotDto,
   type IndexStatusDto,
+  type SearchResultDto,
+  type SearchResponseDto,
   type AuthUserDto,
 } from './contracts';
 export { errorCodes, errorMessages, type ErrorCode } from './error-codes';

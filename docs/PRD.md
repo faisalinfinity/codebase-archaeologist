@@ -69,6 +69,24 @@ Repository ingestion:
 
 Tree-sitter, embeddings, RAG, chat streaming, BYOK encryption, impact analysis, PR/issue ingestion, incremental re-index polish beyond first ingest.
 
+## Phase 3 source slice — implemented after Milestone 2
+
+- Store accepted UTF-8 source text within the existing file-size guard.
+- Extract TypeScript/JavaScript declarations and file imports with the TypeScript compiler API.
+- Persist line-aware chunks, Markdown/configuration documents, and file-level import edges.
+- Let the repository owner browse paginated files and line-addressable source.
+
+Parsers for other languages, symbol-level graph relationships, history evidence, and chat remain later work.
+
+## Phase 4 retrieval slice — implemented after Phase 3
+
+- Keyword search over indexed chunks is available without an AI key.
+- Optional server-side OpenAI embeddings add vector retrieval during indexing.
+- Hybrid results merge keyword and vector ranks and link to commit-pinned source lines.
+- Search is scoped to the authenticated owner's latest ready snapshot.
+
+AI answer generation, chat, history evidence, and broader provider choices remain later work.
+
 ## Functional requirements (full MVP, later milestones)
 
 | ID  | Requirement                                                                           |

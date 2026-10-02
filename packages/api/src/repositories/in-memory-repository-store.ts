@@ -4,12 +4,17 @@ import type {
   IndexJobPatch,
   InsertedRepository,
   InsertFileInput,
+  IndexedChunk,
+  IndexedFile,
+  SearchCandidate,
   InsertRepositoryInput,
   RepositoryPatch,
   RepositoryStore,
   UpsertSnapshotInput,
   UpsertUserInput,
 } from './repository-store';
+import { assertEmbedding } from '../embeddings/embedding-provider';
+import { resolveImport } from './resolve-import';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -41,6 +46,7 @@ export class InMemoryRepositoryStore implements RepositoryStore {
   readonly jobs = new Map<string, IndexJobDto>();
   readonly snapshots = new Map<string, SnapshotDto>();
   readonly files = new Map<string, InsertFileInput[]>();
+  readonly chunks = new Map<string, IndexedChunk[]>();
 
   async upsertUser(input: UpsertUserInput): Promise<void> {
     this.users.set(input.id, input);
@@ -209,11 +215,158 @@ export class InMemoryRepositoryStore implements RepositoryStore {
     return rows[0] ?? null;
   }
 
-  async replaceSnapshotFiles(snapshotId: string, files: InsertFileInput[]): Promise<void> {
-    this.files.set(snapshotId, files);
+  async getLatestReadySnapshot(repositoryId: string): Promise<SnapshotDto | null> {
+    const rows = [...this.snapshots.values()]
+      .filter((row) => row.repositoryId === repositoryId && row.status === 'READY')
+      .sort((a, b) => (b.completedAt ?? '').localeCompare(a.completedAt ?? ''));
+    return rows[0] ?? null;
+  }
+
+  async replaceSnapshotFiles(
+    snapshotId: string,
+    files: AsyncIterable<InsertFileInput> | Iterable<InsertFileInput>,
+  ): Promise<void> {
+    const collected: InsertFileInput[] = [];
+    for await (const file of files) collected.push(file);
+    this.files.set(snapshotId, collected);
+    this.chunks.set(
+      snapshotId,
+      collected.flatMap((file) =>
+        file.chunks.map((chunk) => ({
+          id: crypto.randomUUID(),
+          snapshotId,
+          filePath: file.path,
+          content: chunk.content,
+          startLine: chunk.startLine,
+          endLine: chunk.endLine,
+          embedding: null,
+          embeddingModel: null,
+        })),
+      ),
+    );
   }
 
   async countFiles(snapshotId: string): Promise<number> {
     return this.files.get(snapshotId)?.length ?? 0;
+  }
+
+  async countChunks(snapshotId: string): Promise<number> {
+    return this.chunks.get(snapshotId)?.length ?? 0;
+  }
+
+  async listFiles(
+    snapshotId: string,
+    limit: number,
+    offset: number,
+  ): Promise<Array<Pick<IndexedFile, 'id' | 'path' | 'language' | 'sizeBytes'>>> {
+    return (this.files.get(snapshotId) ?? [])
+      .map((file) => ({
+        id: `${snapshotId}:${file.path}`,
+        path: file.path,
+        language: file.language,
+        sizeBytes: file.sizeBytes,
+      }))
+      .sort((a, b) => a.path.localeCompare(b.path))
+      .slice(offset, offset + limit);
+  }
+
+  async getFile(snapshotId: string, filePath: string): Promise<IndexedFile | null> {
+    const allFiles = this.files.get(snapshotId) ?? [];
+    const file = allFiles.find((entry) => entry.path === filePath);
+    if (!file) return null;
+    const paths = new Set(allFiles.map((entry) => entry.path));
+    return {
+      id: `${snapshotId}:${file.path}`,
+      path: file.path,
+      language: file.language,
+      sizeBytes: file.sizeBytes,
+      content: file.content,
+      symbols: file.symbols,
+      imports: file.imports.map((specifier) => ({
+        specifier,
+        targetPath: resolveImport(file.path, specifier, paths),
+      })),
+    };
+  }
+
+  async getChunksForEmbedding(snapshotId: string, afterId: string | null, limit: number) {
+    return (this.chunks.get(snapshotId) ?? [])
+      .filter((chunk) => !afterId || chunk.id > afterId)
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .slice(0, limit)
+      .map(({ id, content }) => ({ id, content }));
+  }
+
+  async updateChunkEmbeddings(
+    snapshotId: string,
+    model: string,
+    items: Array<{ id: string; embedding: number[] }>,
+  ): Promise<void> {
+    const chunks = this.chunks.get(snapshotId) ?? [];
+    for (const item of items) {
+      assertEmbedding(item.embedding);
+      const chunk = chunks.find((row) => row.id === item.id);
+      if (!chunk) throw new Error('Indexed chunk is missing.');
+      chunk.embedding = item.embedding;
+      chunk.embeddingModel = model;
+    }
+  }
+
+  async hasEmbeddings(snapshotId: string, model: string): Promise<boolean> {
+    return (this.chunks.get(snapshotId) ?? []).some(
+      (chunk) => chunk.embeddingModel === model && chunk.embedding,
+    );
+  }
+
+  async searchLexical(
+    snapshotId: string,
+    query: string,
+    limit: number,
+  ): Promise<SearchCandidate[]> {
+    const terms = [...new Set(query.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [])];
+    if (terms.length === 0) return [];
+    return (this.chunks.get(snapshotId) ?? [])
+      .map((chunk) => {
+        const content = chunk.content.toLowerCase();
+        const score = terms.reduce((total, term) => total + (content.includes(term) ? 1 : 0), 0);
+        return {
+          chunkId: chunk.id,
+          filePath: chunk.filePath,
+          content: chunk.content,
+          startLine: chunk.startLine,
+          endLine: chunk.endLine,
+          score,
+        };
+      })
+      .filter((candidate) => candidate.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+  }
+
+  async searchSemantic(
+    snapshotId: string,
+    model: string,
+    vector: number[],
+    limit: number,
+  ): Promise<SearchCandidate[]> {
+    assertEmbedding(vector);
+    const queryMagnitude = Math.hypot(...vector);
+    return (this.chunks.get(snapshotId) ?? [])
+      .filter((chunk) => chunk.embeddingModel === model && chunk.embedding)
+      .map((chunk) => {
+        const embedding = chunk.embedding ?? [];
+        const dot = embedding.reduce((sum, value, index) => sum + value * (vector[index] ?? 0), 0);
+        const magnitude = Math.hypot(...embedding) * queryMagnitude;
+        return {
+          chunkId: chunk.id,
+          filePath: chunk.filePath,
+          content: chunk.content,
+          startLine: chunk.startLine,
+          endLine: chunk.endLine,
+          score: magnitude === 0 ? 0 : dot / magnitude,
+        };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
   }
 }

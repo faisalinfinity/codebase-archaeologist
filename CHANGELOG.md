@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0 — Phase 4 retrieval
+
+- Add indexed keyword search and optional OpenAI embeddings for source chunks.
+- Add pgvector cosine search and reciprocal-rank fusion for hybrid retrieval.
+- Add owner-protected repository search API and UI with commit-pinned source links.
+- Keep keyword search available when no embedding key is configured.
+
+## 0.3.0 — Phase 3 source intelligence (first slice)
+
+- Store bounded UTF-8 source content and line-aware chunks for accepted files.
+- Extract TypeScript/JavaScript declarations, methods, and imports without executing code.
+- Record markdown and selected configuration documents, plus file-level import edges.
+- Add owner-protected, paginated file browsing and line-addressable source view.
+- Fix canonical root handling when scanning temporary clones on macOS.
+
 ## 0.1.0 — Milestone 1 (foundation)
 
 - Monorepo: `apps/web`, `packages/api`, `packages/db`, `packages/shared`.

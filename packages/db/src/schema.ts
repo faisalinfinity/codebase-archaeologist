@@ -169,6 +169,7 @@ export const files = pgTable(
     language: text('language'),
     sizeBytes: integer('size_bytes').notNull().default(0),
     sha: text('sha'),
+    content: text('content'),
     isBinary: boolean('is_binary').notNull().default(false),
     isGenerated: boolean('is_generated').notNull().default(false),
     ...timestamps,
@@ -232,6 +233,8 @@ export const codeChunks = pgTable(
     language: text('language'),
     // Placeholder width — see DECISIONS.md. Not a frozen embedding contract.
     embedding: vector('embedding', { dimensions: 1536 }),
+    embeddingModel: text('embedding_model'),
+    embeddingUpdatedAt: timestamp('embedding_updated_at', { withTimezone: true }),
     metadataJson: jsonb('metadata_json').$type<Record<string, unknown>>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -378,6 +381,8 @@ export const dependencies = pgTable(
     targetSymbolId: uuid('target_symbol_id').references(() => codeSymbols.id, {
       onDelete: 'cascade',
     }),
+    sourceFileId: uuid('source_file_id').references(() => files.id, { onDelete: 'cascade' }),
+    targetFileId: uuid('target_file_id').references(() => files.id, { onDelete: 'cascade' }),
     relationshipType: text('relationship_type').notNull(),
     metadataJson: jsonb('metadata_json').$type<Record<string, unknown>>(),
   },

@@ -28,6 +28,7 @@ export interface IndexJobProgress {
   filesIndexed?: number;
   filesSkipped?: number;
   filesSeen?: number;
+  chunksEmbedded?: number;
   skippedReasons?: Record<string, number>;
 }
 
@@ -67,6 +68,23 @@ export interface IndexStatusDto {
   snapshot: SnapshotDto | null;
   alreadyIndexed: boolean;
   fileCount: number;
+}
+
+export interface SearchResultDto {
+  chunkId: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  snippet: string;
+  githubUrl: string;
+  score: number;
+}
+
+export interface SearchResponseDto {
+  repositoryId: string;
+  commitSha: string | null;
+  mode: 'lexical' | 'hybrid';
+  results: SearchResultDto[];
 }
 
 export interface AuthUserDto {

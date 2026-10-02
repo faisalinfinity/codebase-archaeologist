@@ -59,10 +59,14 @@ export default async function RepositoryDetailPage({
             </p>
             {repo.description ? <p>{repo.description}</p> : null}
             <IndexProgress repositoryId={repo.id} initial={status} />
-            <p>
-              Chat, files, history, and dependencies routes will attach here in later milestones.
-            </p>
+            <p>Search and source browsing are ready. Chat and history analysis are planned next.</p>
             <div className="flex flex-wrap gap-2 pt-2">
+              <Button asChild variant="outline">
+                <Link href={`/repositories/${repo.id}/search`}>Search source</Link>
+              </Button>
+              <Button asChild variant="outline">
+                <Link href={`/repositories/${repo.id}/files`}>Browse indexed files</Link>
+              </Button>
               <Button asChild variant="outline" disabled>
                 <span>Chat (not yet)</span>
               </Button>

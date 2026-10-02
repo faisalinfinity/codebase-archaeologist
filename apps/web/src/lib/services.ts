@@ -4,6 +4,7 @@ import {
   HttpError,
   NoopIndexQueue,
   RepositoryService,
+  configuredEmbeddingProvider,
 } from '@archaeologist/api';
 
 export function requireDatabase(): void {
@@ -23,5 +24,6 @@ export function createRepositoryService(): RepositoryService {
     new GitHubRepoClient({ token: process.env.GITHUB_API_TOKEN }),
     new NoopIndexQueue(),
     process.env,
+    configuredEmbeddingProvider(process.env),
   );
 }

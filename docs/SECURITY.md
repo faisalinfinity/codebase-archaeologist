@@ -21,15 +21,16 @@ MVP posture:
 
 Git usage is restricted to the read-only operations required to ingest a snapshot (clone/fetch of a known SHA). Do not run hooks (`core.hooksPath=/dev/null`). Disable or ignore repository-provided hook scripts. Treat symlinks, archives, and path traversal as hostile.
 
-Required guards (enforced in Milestone 2 ingestion):
+Required ingest guards:
 
 - file-size and repository-size limits
-- job timeouts, memory and CPU limits
+- clone and scan timeouts; worker CPU/memory limits remain a deployment requirement
 - path traversal protection
 - symlink / archive safeguards
 - binary detection
 - ignore lists (`node_modules`, `.git` objects as execution, build output, lockfiles, media)
 - never index secret values from `.env` (`.env.example` is allowed as documentation)
+- cap the number of chunks sent to an embedding provider per index job
 
 A future isolated execution feature would need its own design, sandbox, review, and milestone. It is not a flag on the current worker.
 
@@ -40,6 +41,7 @@ A future isolated execution feature would need its own design, sandbox, review, 
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Browser (public client key)                      | Treated as a privileged secret                |
 | `SUPABASE_SERVICE_ROLE_KEY`     | Server / worker only                             | Browser, logs, client bundles, git            |
 | `DEMO_AI_API_KEY`               | Server process env                               | Browser, `NEXT_PUBLIC_*`, chat payloads, logs |
+| `OPENAI_API_KEY`                | Web server and worker env for embeddings         | Browser, `NEXT_PUBLIC_*`, API responses, logs |
 | User BYOK                       | Encrypted at rest; decrypted in memory on server | Browser after submit, chat_messages, logs     |
 | `ENCRYPTION_KEY`                | Server / KMS                                     | Browser, git, CI logs                         |
 | `DATABASE_URL`                  | Server / worker / migrate job                    | Browser                                       |
@@ -55,11 +57,14 @@ Rules:
 
 `.env.example` lists names and dummy values only.
 
+When `OPENAI_API_KEY` is configured, the worker sends bounded snippets of indexed public source to OpenAI for embeddings, and the web server sends search queries for semantic retrieval. Keep this option disabled when that data must not leave the deployment.
+
 ## Authentication and authorization
 
 - All API endpoints require a session except explicitly public ones (`/`, `/login`, `/auth/callback`, `/api/health`).
 - Every repository, chat, chunk, and provider query must verify `owner_user_id` (or equivalent membership). Do not trust IDs from the browser.
 - User A must not read User B’s repositories, chunks, chats, provider configs, or usage events.
+- Indexed source text, symbols, imports, and search hits are returned only after repository ownership is checked and a snapshot is `READY`.
 - On Supabase-hosted Postgres, enable RLS (`packages/db/supabase/rls.sql`) **in addition to** application checks. Test RLS explicitly before calling auth “done” for production.
 
 ## Prompt injection and citations (later, designed now)

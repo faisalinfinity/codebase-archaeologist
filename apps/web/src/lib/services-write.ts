@@ -1,4 +1,4 @@
-import { RepositoryService } from '@archaeologist/api';
+import { RepositoryService, configuredEmbeddingProvider } from '@archaeologist/api';
 
 import { createRepositoryService, requireDatabase } from '@/lib/services';
 
@@ -17,5 +17,6 @@ export async function createRepositoryWriteService(): Promise<RepositoryService>
     new GitHubRepoClient({ token: process.env.GITHUB_API_TOKEN }),
     new BullmqIndexQueue(process.env.REDIS_URL),
     process.env,
+    configuredEmbeddingProvider(process.env),
   );
 }

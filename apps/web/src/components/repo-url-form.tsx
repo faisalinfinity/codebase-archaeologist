@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 
 export function RepoUrlForm() {
   const router = useRouter();
-  const [url, setUrl] = useState('https://github.com/vercel/next.js');
+  const [url, setUrl] = useState('https://github.com/octocat/Hello-World');
 
   function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();

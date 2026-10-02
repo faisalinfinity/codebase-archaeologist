@@ -180,6 +180,9 @@ export async function scanRepositoryTree(
           });
           continue;
         }
+        filesSkipped += 1;
+        bump(skippedReasons, 'symlink');
+        continue;
       } else if (!entry.isFile()) {
         filesSkipped += 1;
         bump(skippedReasons, 'unsupported_type');
@@ -278,7 +281,9 @@ export async function scanRepositoryTree(
     }
   };
 
-  await visit(rootDir);
+  // Keep traversal and relative-path calculations on the same canonical root.
+  // On macOS, /var resolves to /private/var; mixing them rejects valid files.
+  await visit(rootReal);
 
   return {
     files,
