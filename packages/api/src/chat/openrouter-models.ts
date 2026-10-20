@@ -35,13 +35,20 @@ export class OpenRouterModelCatalog {
       }
     }
     const model = this.models.find((item) => item.id === modelId);
+    const free =
+      modelId.endsWith(':free') &&
+      model?.pricing?.prompt === '0' &&
+      model.pricing.completion === '0';
+    if (!free) return undefined;
     const config = model?.reasoning;
     if (
       !config ||
       !(
         config.mandatory ||
         config.default_enabled ||
-        (config.default_effort && config.default_effort !== 'none')
+        (config.default_enabled !== false &&
+          config.default_effort &&
+          config.default_effort !== 'none')
       )
     )
       return undefined;
@@ -49,10 +56,6 @@ export class OpenRouterModelCatalog {
       (value) =>
         Array.isArray(config.supported_efforts) && config.supported_efforts.includes(value),
     );
-    const free =
-      modelId.endsWith(':free') &&
-      model?.pricing?.prompt === '0' &&
-      model.pricing.completion === '0';
     return {
       reasoning: { ...(effort ? { effort } : {}), exclude: true },
       ...(free

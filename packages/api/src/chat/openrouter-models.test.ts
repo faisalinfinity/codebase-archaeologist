@@ -37,7 +37,7 @@ it('preserves the user token cap for paid models and ignores non-reasoning model
     ),
   );
   const catalog = new OpenRouterModelCatalog(fetcher);
-  expect(await catalog.policy(paid.id)).toEqual({ reasoning: { effort: 'low', exclude: true } });
+  expect(await catalog.policy(paid.id)).toBeUndefined();
   expect(await catalog.policy('plain/model:free')).toBeUndefined();
 });
 it('keeps chat usable if the optional public model catalog is unavailable', async () => {
@@ -53,7 +53,5 @@ it('does not expand the token cap for an unverified free suffix', async () => {
       }),
     ),
   );
-  expect(await new OpenRouterModelCatalog(fetcher).policy(model.id)).toEqual({
-    reasoning: { effort: 'low', exclude: true },
-  });
+  expect(await new OpenRouterModelCatalog(fetcher).policy(model.id)).toBeUndefined();
 });

@@ -97,6 +97,6 @@ References: [Vercel monorepos](https://vercel.com/docs/monorepos), [Next.js self
 
 ## OpenRouter reasoning models
 
-The app reads OpenRouter’s public model capabilities without sending a user key or source content. For models with reasoning enabled, it chooses the lowest supported effort and keeps reasoning out of the visible answer. For zero-price `:free` reasoning models, a separate combined reasoning/output token budget defaults to 8,192 (`MAX_FREE_REASONING_TOKENS`, capped at 16,384). Paid models retain the normal configured token cap. The selected model ID is preserved and requests never silently fall back to a paid model.
+The app reads OpenRouter’s public model capabilities without sending a user key or source content. For zero-price `:free` models with reasoning enabled, it chooses the lowest supported effort and keeps reasoning out of the visible answer. For zero-price `:free` reasoning models, a separate combined reasoning/output token budget defaults to 8,192 (`MAX_FREE_REASONING_TOKENS`, capped at 16,384). Paid models retain the normal configured token cap. The selected model ID is preserved and requests never silently fall back to a paid model.
 
 Chat errors identify token exhaustion, invalid keys, rate limits, unavailable models, account limits, or OpenRouter privacy routing restrictions without exposing raw provider messages, prompts, or credentials. Safe error codes are logged for support.
