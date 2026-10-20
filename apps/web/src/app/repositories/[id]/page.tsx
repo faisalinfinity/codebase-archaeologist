@@ -59,7 +59,9 @@ export default async function RepositoryDetailPage({
             </p>
             {repo.description ? <p>{repo.description}</p> : null}
             <IndexProgress repositoryId={repo.id} initial={status} />
-            <p>Search and source browsing are ready. Chat and history analysis are planned next.</p>
+            <p>
+              Search, source browsing, recent history, change impact, and cited chat are available.
+            </p>
             <div className="flex flex-wrap gap-2 pt-2">
               <Button asChild variant="outline">
                 <Link href={`/repositories/${repo.id}/search`}>Search source</Link>
@@ -67,8 +69,14 @@ export default async function RepositoryDetailPage({
               <Button asChild variant="outline">
                 <Link href={`/repositories/${repo.id}/files`}>Browse indexed files</Link>
               </Button>
-              <Button asChild variant="outline" disabled>
-                <span>Chat (not yet)</span>
+              <Button asChild variant="outline">
+                <Link href={`/repositories/${repo.id}/history`}>Recent history</Link>
+              </Button>
+              <Button asChild variant="outline">
+                <Link href={`/repositories/${repo.id}/impact`}>Change impact</Link>
+              </Button>
+              <Button asChild variant="outline">
+                <Link href={`/repositories/${repo.id}/chat`}>Chat with repository</Link>
               </Button>
               <DeleteRepositoryButton repositoryId={repo.id} />
             </div>

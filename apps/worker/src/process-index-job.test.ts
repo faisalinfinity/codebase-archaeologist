@@ -58,6 +58,8 @@ describe('processIndexJob', () => {
     const paths = files.map((file) => file.path).sort();
     expect(paths).toEqual(['README.md', 'src/app.ts']);
     expect(job?.progress?.filesIndexed).toBe(2);
+    expect(job?.progress?.commitsIndexed).toBe(1);
+    expect(store.history.get(inserted.repository.id)?.[0]?.message).toBe('init');
     const sourceFile = await store.getFile(snapshot?.id ?? '', 'src/app.ts');
     expect(sourceFile?.content).toBe('export function run() { return 1; }\n');
     expect(sourceFile?.symbols).toEqual(
@@ -197,5 +199,62 @@ describe('processIndexJob', () => {
     expect(job?.stage).toBe('EMBEDDING');
     expect(await store.getLatestReadySnapshot(inserted.repository.id)).toBeNull();
     expect((await store.getSnapshot(job?.snapshotId ?? ''))?.status).toBe('FAILED');
+  });
+
+  it('keeps the source snapshot ready when optional PR sync is unavailable', async () => {
+    const source = await initLocalGitRepo();
+    const store = new InMemoryRepositoryStore();
+    const inserted = await store.insertRepository({
+      ownerUserId: '11111111-1111-1111-1111-111111111111',
+      githubOwner: 'octocat',
+      githubRepo: 'Hello-World',
+      githubUrl: 'https://github.com/octocat/Hello-World',
+      defaultBranch: 'main',
+    });
+    await processLocalFixture(
+      { repositoryId: inserted.repository.id, jobId: inserted.job.id },
+      store,
+      source,
+      undefined,
+      undefined,
+      {
+        async getRepository() {
+          return {
+            owner: 'octocat',
+            repo: 'Hello-World',
+            defaultBranch: 'main',
+            description: null,
+            stars: 0,
+            forks: 0,
+            language: null,
+            private: false,
+            sizeKb: 1,
+            htmlUrl: 'https://github.com/octocat/Hello-World',
+          };
+        },
+        async getPullRequests() {
+          throw new Error('rate limited');
+        },
+        async getIssues() {
+          return [
+            {
+              number: 1,
+              title: 'A bug',
+              body: null,
+              author: 'tester',
+              state: 'open',
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+          ];
+        },
+      },
+    );
+    const job = await store.getJob(inserted.job.id);
+    expect(job?.status).toBe('READY');
+    expect(job?.progress?.message).toContain('Some GitHub context could not be loaded');
+    expect(job?.progress?.commitsIndexed).toBe(1);
+    expect(job?.progress?.issuesIndexed).toBe(1);
+    expect(store.issueRows.get(inserted.repository.id)?.[0]?.title).toBe('A bug');
   });
 });

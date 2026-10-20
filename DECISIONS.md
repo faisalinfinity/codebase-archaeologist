@@ -56,9 +56,9 @@ Server-only names (`DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, future `DEMO_AI_
 ## Deferred (explicitly not Milestone 1)
 
 - Husky / lint-staged — useful later; CI already gates PRs.
-- Action SHA pinning — follow-up hardening for `.github/workflows`.
+- Action SHA pinning — completed in Phase 7.
 - Standalone `apps/api` Fastify service.
-- Vercel project wiring (preview deploy is a product goal; this repo prepares a buildable Next.js app).
+- Vercel project wiring — configuration and a separate worker image added in Phase 7.
 
 ## Milestone 2 — repository ingestion
 
@@ -91,3 +91,31 @@ Server-only names (`DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, future `DEMO_AI_
 | Vector width    | Existing `vector(1536)` column                        | Provider interface allows replacement; another vector width needs a schema/index migration.                                                              |
 | Ranking         | Reciprocal rank fusion                                | Combines top keyword and vector hits without comparing their raw score scales.                                                                           |
 | Failure         | Embedding failure marks an index job failed           | Keeps incomplete snapshots out of search. Query-time semantic failures fall back to keyword results.                                                     |
+
+## Phase 5 — grounded chat
+
+| Concern      | Choice                                                           | Notes                                                                                                                 |
+| ------------ | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Demo AI      | Server-side OpenAI Responses adapter                             | Uses a configurable model, `store: false`, streamed text deltas, and a bounded output. The default is `gpt-4.1-mini`. |
+| Context      | Latest ready snapshot and up to six search hits                  | Send short, source-labeled evidence and limited recent chat history. Repository text is treated as data.              |
+| Citations    | Validate `[S1]`-style markers after generation                   | Only markers mapped to retrieved source records become clickable or persist as citations.                             |
+| Persistence  | Save complete user/assistant turns in one database transaction   | Failed or disconnected streams do not leave partial turns. Usage events store token counts when returned.             |
+| Abuse bounds | 2,000-character questions, hourly per-user limit, bounded output | Server-side configuration controls limits; provider keys never reach the browser.                                     |
+
+## Phase 6 — recent history and impact
+
+| Concern        | Choice                                                     | Notes                                                                                                                                   |
+| -------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Git history    | Read-only `git log` and `git diff-tree` on a shallow clone | Default window is 50 commits; only changed paths and bounded commit messages are saved. Repository code remains unexecuted.             |
+| GitHub context | Public REST PR and issue lists                             | Fetch one bounded page per type. GitHub issues containing `pull_request` are excluded. API failure leaves code/history indexing usable. |
+| Impact         | Reverse traversal of resolved local imports, three hops    | Also surface files co-changed in the recent commit window. Dynamic imports, aliases, and runtime dependencies need later analysis.      |
+| Chat evidence  | Source, commit, PR, and issue markers                      | `[S]`, `[H]`, `[P]`, and `[I]` links are validated against retrieved records before persistence and rendering.                          |
+
+## Phase 7 — providers, analysis, and release checks
+
+- One active personal provider per user; AES-256-GCM uses owner-bound authenticated data and a stable server encryption key. Key reads are server-only.
+- Provider adapters use Anthropic native SSE and OpenAI-compatible chat SSE for OpenAI/Gemini/OpenRouter/custom APIs. Model IDs are supplied by users rather than assuming account availability. See the [OpenAI streaming reference](https://developers.openai.com/api/reference/resources/chat/subresources/completions/streaming-events), [Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming), [Gemini compatibility](https://ai.google.dev/gemini-api/docs/openai), and [OpenRouter streaming](https://openrouter.ai/docs/api_reference/streaming).
+- WASM grammars from `tree-sitter-wasms` are loaded only from installed dependencies; target repository code remains unexecuted. JavaScript/TypeScript keep the existing compiler-API parser and gain conservative reference extraction.
+- Full-history mode removes shallow cloning on one branch, while count/time/output limits remain mandatory. PR details are bounded and incomplete results are labeled.
+- Deployment target is Vercel web plus a manually triggered GitHub Actions worker to stay within the user’s free-tier constraint. The non-root container remains an optional self-hosted alternative. The worker starts Node directly so it can run under a read-only filesystem without a package-manager cache.
+- CI includes fresh Postgres migrations, database integration and RLS tests, browser flows with a local auth fixture, a production web build, and a worker image build.

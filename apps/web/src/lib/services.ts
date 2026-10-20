@@ -4,6 +4,10 @@ import {
   HttpError,
   NoopIndexQueue,
   RepositoryService,
+  ChatService,
+  DrizzleChatStore,
+  ProviderSettingsService,
+  DrizzleProviderSettingsStore,
   configuredEmbeddingProvider,
 } from '@archaeologist/api';
 
@@ -15,6 +19,20 @@ export function requireDatabase(): void {
       'Database is not configured. Set DATABASE_URL and run migrations.',
     );
   }
+}
+
+export function createChatService(): ChatService {
+  return new ChatService(
+    createRepositoryService(),
+    new DrizzleChatStore(),
+    (userId) => createProviderSettingsService().resolve(userId),
+    process.env,
+  );
+}
+
+export function createProviderSettingsService(): ProviderSettingsService {
+  requireDatabase();
+  return new ProviderSettingsService(new DrizzleProviderSettingsStore(), process.env);
 }
 
 export function createRepositoryService(): RepositoryService {

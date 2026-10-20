@@ -1,13 +1,18 @@
-import { and, asc, count, desc, eq, gt, isNotNull, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, inArray, isNotNull, sql } from 'drizzle-orm';
 
 import {
   files,
   codeChunks,
   codeSymbols,
+  commits,
+  commitFiles,
   dependencies,
   documents,
   getDatabase,
   indexJobs,
+  issues,
+  pullRequests,
+  pullRequestFiles,
   repositories,
   repositorySnapshots,
   users,
@@ -27,6 +32,9 @@ import type {
   IndexedFile,
   SearchCandidate,
   InsertRepositoryInput,
+  InsertCommitInput,
+  InsertPullRequestInput,
+  InsertIssueInput,
   RepositoryPatch,
   RepositoryStore,
   UpsertSnapshotInput,
@@ -34,6 +42,7 @@ import type {
 } from './repository-store';
 import { assertEmbedding } from '../embeddings/embedding-provider';
 import { resolveImport } from './resolve-import';
+import { buildSymbolEdges, type GraphFile } from './symbol-graph';
 
 function toRepositoryDto(row: typeof repositories.$inferSelect): RepositoryDto {
   return {
@@ -247,21 +256,40 @@ export class DrizzleRepositoryStore implements RepositoryStore {
   }
 
   async createIndexJob(repositoryId: string): Promise<IndexJobDto> {
-    const rows = await this.db
-      .insert(indexJobs)
-      .values({
-        repositoryId,
-        jobType: 'repository:index',
-        status: 'PENDING',
-        stage: 'PENDING',
-        progressJson: { message: 'Waiting for the index worker.' },
-      })
-      .returning();
-    const row = rows[0];
-    if (!row) {
-      throw new Error('Failed to insert index job.');
-    }
-    return toJobDto(row);
+    return this.db.transaction(async (tx) => {
+      await tx
+        .select({ id: repositories.id })
+        .from(repositories)
+        .where(eq(repositories.id, repositoryId))
+        .for('update');
+      const [active] = await tx
+        .select()
+        .from(indexJobs)
+        .where(
+          and(
+            eq(indexJobs.repositoryId, repositoryId),
+            sql`${indexJobs.status} NOT IN ('READY', 'FAILED')`,
+          ),
+        )
+        .orderBy(desc(indexJobs.createdAt))
+        .limit(1);
+      if (active) return toJobDto(active);
+      const rows = await tx
+        .insert(indexJobs)
+        .values({
+          repositoryId,
+          jobType: 'repository:index',
+          status: 'PENDING',
+          stage: 'PENDING',
+          progressJson: { message: 'Waiting for the index worker.' },
+        })
+        .returning();
+      const row = rows[0];
+      if (!row) {
+        throw new Error('Failed to insert index job.');
+      }
+      return toJobDto(row);
+    });
   }
 
   async updateJob(jobId: string, patch: IndexJobPatch): Promise<IndexJobDto | null> {
@@ -299,6 +327,15 @@ export class DrizzleRepositoryStore implements RepositoryStore {
               : {}),
             ...(patch.progress.chunksEmbedded !== undefined
               ? { chunksEmbedded: patch.progress.chunksEmbedded }
+              : {}),
+            ...(patch.progress.commitsIndexed !== undefined
+              ? { commitsIndexed: patch.progress.commitsIndexed }
+              : {}),
+            ...(patch.progress.pullRequestsIndexed !== undefined
+              ? { pullRequestsIndexed: patch.progress.pullRequestsIndexed }
+              : {}),
+            ...(patch.progress.issuesIndexed !== undefined
+              ? { issuesIndexed: patch.progress.issuesIndexed }
               : {}),
             ...(patch.progress.skippedReasons
               ? { skippedReasons: patch.progress.skippedReasons }
@@ -395,6 +432,7 @@ export class DrizzleRepositoryStore implements RepositoryStore {
       await tx.delete(documents).where(eq(documents.snapshotId, snapshotId));
       await tx.delete(files).where(eq(files.snapshotId, snapshotId));
       const ids = new Map<string, string>();
+      const graphFiles: GraphFile[] = [];
       const pendingImports: Array<{
         sourcePath: string;
         sourceFileId: string;
@@ -422,6 +460,12 @@ export class DrizzleRepositoryStore implements RepositoryStore {
           .returning({ id: files.id, path: files.path });
         for (const row of rows) ids.set(row.path, row.id);
         for (const file of batch) {
+          graphFiles.push({
+            path: file.path,
+            symbols: file.symbols,
+            references: file.references,
+            aliases: file.aliases,
+          });
           const fileId = ids.get(file.path);
           if (!fileId) throw new Error('Indexed file row is missing.');
           for (let i = 0; i < file.symbols.length; i += 100) {
@@ -491,10 +535,16 @@ export class DrizzleRepositoryStore implements RepositoryStore {
       await flush(batch);
 
       const availablePaths = new Set(ids.keys());
+      const aliases = graphFiles.flatMap((file) => file.aliases ?? []);
       for (let i = 0; i < pendingImports.length; i += 200) {
         await tx.insert(dependencies).values(
           pendingImports.slice(i, i + 200).map((entry) => {
-            const targetPath = resolveImport(entry.sourcePath, entry.specifier, availablePaths);
+            const targetPath = resolveImport(
+              entry.sourcePath,
+              entry.specifier,
+              availablePaths,
+              aliases,
+            );
             return {
               repositoryId: entry.repositoryId,
               snapshotId,
@@ -506,6 +556,43 @@ export class DrizzleRepositoryStore implements RepositoryStore {
           }),
         );
       }
+      const symbolRows = await tx
+        .select({
+          id: codeSymbols.id,
+          fileId: codeSymbols.fileId,
+          name: codeSymbols.name,
+          line: codeSymbols.startLine,
+        })
+        .from(codeSymbols)
+        .where(eq(codeSymbols.snapshotId, snapshotId));
+      const symbolIds = new Map(
+        symbolRows.map((symbol) => [`${symbol.fileId}:${symbol.name}:${symbol.line}`, symbol.id]),
+      );
+      const edges = buildSymbolEdges(graphFiles);
+      const repositoryId =
+        pendingImports[0]?.repositoryId ??
+        (
+          await tx
+            .select({ repositoryId: repositorySnapshots.repositoryId })
+            .from(repositorySnapshots)
+            .where(eq(repositorySnapshots.id, snapshotId))
+        )[0]?.repositoryId;
+      for (let i = 0; repositoryId && i < edges.length; i += 200)
+        await tx.insert(dependencies).values(
+          edges.slice(i, i + 200).map((edge) => ({
+            repositoryId,
+            snapshotId,
+            sourceFileId: ids.get(edge.sourcePath),
+            targetFileId: ids.get(edge.targetPath),
+            sourceSymbolId: symbolIds.get(
+              `${ids.get(edge.sourcePath)}:${edge.sourceName}:${edge.sourceLine}`,
+            ),
+            targetSymbolId: symbolIds.get(
+              `${ids.get(edge.targetPath)}:${edge.targetName}:${edge.targetLine}`,
+            ),
+            relationshipType: edge.relationshipType,
+          })),
+        );
     });
   }
 
@@ -694,5 +781,253 @@ export class DrizzleRepositoryStore implements RepositoryStore {
       .orderBy(asc(distance))
       .limit(limit);
     return rows;
+  }
+
+  async replaceCommitHistory(repositoryId: string, history: InsertCommitInput[]): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.delete(commits).where(eq(commits.repositoryId, repositoryId));
+      for (const entry of history) {
+        const rows = await tx
+          .insert(commits)
+          .values({
+            repositoryId,
+            sha: entry.sha,
+            parentSha: entry.parentSha,
+            authorName: entry.authorName,
+            committedAt: entry.committedAt,
+            message: entry.message,
+          })
+          .returning({ id: commits.id });
+        const commitId = rows[0]?.id;
+        if (!commitId) throw new Error('Could not save commit history.');
+        for (let i = 0; i < entry.files.length; i += 100) {
+          await tx.insert(commitFiles).values(
+            entry.files.slice(i, i + 100).map((file) => ({
+              commitId,
+              path: file.path,
+              changeType: file.changeType,
+            })),
+          );
+        }
+      }
+    });
+  }
+
+  async replacePullRequests(
+    repositoryId: string,
+    entries: InsertPullRequestInput[],
+  ): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.delete(pullRequests).where(eq(pullRequests.repositoryId, repositoryId));
+      for (const item of entries) {
+        const [row] = await tx
+          .insert(pullRequests)
+          .values({
+            repositoryId,
+            number: item.number,
+            title: item.title,
+            body: item.body,
+            author: item.author,
+            state: item.state,
+            createdAt: item.createdAt,
+            mergedAt: item.mergedAt,
+            updatedAt: item.updatedAt,
+            metadataJson: {
+              filesComplete: item.filesComplete ?? false,
+              relatedIssues: item.relatedIssues ?? [],
+            },
+          })
+          .returning({ id: pullRequests.id });
+        if (!row) throw new Error('Could not save pull request.');
+        for (let i = 0; i < (item.files?.length ?? 0); i += 100)
+          await tx.insert(pullRequestFiles).values(
+            item.files!.slice(i, i + 100).map((file) => ({
+              pullRequestId: row.id,
+              path: file.path,
+              changeType: file.changeType,
+            })),
+          );
+      }
+    });
+  }
+
+  async replaceIssues(repositoryId: string, entries: InsertIssueInput[]): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.delete(issues).where(eq(issues.repositoryId, repositoryId));
+      for (let i = 0; i < entries.length; i += 100) {
+        await tx.insert(issues).values(
+          entries.slice(i, i + 100).map((item) => ({
+            repositoryId,
+            number: item.number,
+            title: item.title,
+            body: item.body,
+            author: item.author,
+            state: item.state,
+            createdAt: item.createdAt,
+            updatedAt: item.updatedAt,
+            metadataJson: { filePaths: item.filePaths ?? [] },
+          })),
+        );
+      }
+    });
+  }
+
+  async listCommits(repositoryId: string, limit: number, offset = 0, filePath?: string) {
+    const rows = await this.db
+      .select()
+      .from(commits)
+      .where(
+        and(
+          eq(commits.repositoryId, repositoryId),
+          filePath
+            ? sql`EXISTS (SELECT 1 FROM commit_files cf WHERE cf.commit_id = ${commits.id} AND cf.path = ${filePath})`
+            : undefined,
+        ),
+      )
+      .orderBy(desc(commits.committedAt), desc(commits.id))
+      .limit(limit)
+      .offset(offset);
+    const changed =
+      rows.length > 0
+        ? await this.db
+            .select({
+              commitId: commitFiles.commitId,
+              path: commitFiles.path,
+              changeType: commitFiles.changeType,
+            })
+            .from(commitFiles)
+            .where(
+              inArray(
+                commitFiles.commitId,
+                rows.map((row) => row.id),
+              ),
+            )
+        : [];
+    const byCommit = new Map<string, Array<{ path: string; changeType: string }>>();
+    for (const file of changed) {
+      const list = byCommit.get(file.commitId) ?? [];
+      list.push({ path: file.path, changeType: file.changeType });
+      byCommit.set(file.commitId, list);
+    }
+    return rows.map((row) => ({
+      sha: row.sha,
+      parentSha: row.parentSha,
+      authorName: row.authorName,
+      committedAt: row.committedAt?.toISOString() ?? null,
+      message: row.message,
+      files: (byCommit.get(row.id) ?? []).sort((a, b) => a.path.localeCompare(b.path)),
+    }));
+  }
+
+  async listPullRequests(repositoryId: string, limit: number) {
+    const rows = await this.db
+      .select()
+      .from(pullRequests)
+      .where(eq(pullRequests.repositoryId, repositoryId))
+      .orderBy(desc(pullRequests.updatedAt), desc(pullRequests.number))
+      .limit(limit);
+    const changed = rows.length
+      ? await this.db
+          .select()
+          .from(pullRequestFiles)
+          .where(
+            inArray(
+              pullRequestFiles.pullRequestId,
+              rows.map((row) => row.id),
+            ),
+          )
+      : [];
+    return rows.map((row) => ({
+      files: changed
+        .filter((file) => file.pullRequestId === row.id)
+        .map((file) => ({ path: file.path, changeType: file.changeType ?? 'modified' })),
+      filesComplete: row.metadataJson?.filesComplete === true,
+      relatedIssues: Array.isArray(row.metadataJson?.relatedIssues)
+        ? row.metadataJson.relatedIssues.filter(
+            (value): value is number => typeof value === 'number',
+          )
+        : [],
+      number: row.number,
+      title: row.title,
+      body: row.body,
+      author: row.author,
+      state: row.state,
+      createdAt: row.createdAt?.toISOString() ?? null,
+      mergedAt: row.mergedAt?.toISOString() ?? null,
+      updatedAt: row.updatedAt?.toISOString() ?? null,
+    }));
+  }
+
+  async listIssues(repositoryId: string, limit: number) {
+    const rows = await this.db
+      .select()
+      .from(issues)
+      .where(eq(issues.repositoryId, repositoryId))
+      .orderBy(desc(issues.updatedAt), desc(issues.number))
+      .limit(limit);
+    return rows.map((row) => ({
+      filePaths: Array.isArray(row.metadataJson?.filePaths)
+        ? row.metadataJson.filePaths.filter((value): value is string => typeof value === 'string')
+        : [],
+      number: row.number,
+      title: row.title,
+      body: row.body,
+      author: row.author,
+      state: row.state,
+      createdAt: row.createdAt?.toISOString() ?? null,
+      updatedAt: row.updatedAt?.toISOString() ?? null,
+    }));
+  }
+
+  async listImportEdges(snapshotId: string) {
+    const rows = await this.db
+      .select({
+        sourceFileId: dependencies.sourceFileId,
+        targetFileId: dependencies.targetFileId,
+      })
+      .from(dependencies)
+      .where(
+        and(
+          eq(dependencies.snapshotId, snapshotId),
+          eq(dependencies.relationshipType, 'imports'),
+          isNotNull(dependencies.sourceFileId),
+          isNotNull(dependencies.targetFileId),
+        ),
+      )
+      .limit(10_000);
+    const fileRows = await this.db
+      .select({ id: files.id, path: files.path })
+      .from(files)
+      .where(eq(files.snapshotId, snapshotId));
+    const paths = new Map(fileRows.map((file) => [file.id, file.path]));
+    return rows.flatMap((edge) => {
+      const sourcePath = edge.sourceFileId ? paths.get(edge.sourceFileId) : null;
+      const targetPath = edge.targetFileId ? paths.get(edge.targetFileId) : null;
+      return sourcePath && targetPath ? [{ sourcePath, targetPath }] : [];
+    });
+  }
+
+  async listSymbolEdges(snapshotId: string) {
+    const rows = await this.db.execute(sql`
+      SELECT sf.path AS "sourcePath", ss.name AS "sourceName", ss.start_line AS "sourceLine",
+             tf.path AS "targetPath", ts.name AS "targetName", ts.start_line AS "targetLine",
+             d.relationship_type AS "relationshipType"
+      FROM dependencies d
+      JOIN files sf ON sf.id = d.source_file_id
+      JOIN files tf ON tf.id = d.target_file_id
+      JOIN code_symbols ss ON ss.id = d.source_symbol_id
+      JOIN code_symbols ts ON ts.id = d.target_symbol_id
+      WHERE d.snapshot_id = ${snapshotId}::uuid AND d.relationship_type IN ('calls', 'constructs', 'extends')
+      ORDER BY sf.path, ss.start_line LIMIT 10000
+    `);
+    return rows.map((row) => ({
+      sourcePath: String(row.sourcePath),
+      sourceName: String(row.sourceName),
+      sourceLine: Number(row.sourceLine),
+      targetPath: String(row.targetPath),
+      targetName: String(row.targetName),
+      targetLine: Number(row.targetLine),
+      relationshipType: String(row.relationshipType),
+    }));
   }
 }

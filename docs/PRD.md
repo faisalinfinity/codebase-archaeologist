@@ -85,9 +85,38 @@ Parsers for other languages, symbol-level graph relationships, history evidence,
 - Hybrid results merge keyword and vector ranks and link to commit-pinned source lines.
 - Search is scoped to the authenticated owner's latest ready snapshot.
 
-AI answer generation, chat, history evidence, and broader provider choices remain later work.
+AI answer generation, chat, history evidence, and broader provider choices were later work at Phase 4.
 
-## Functional requirements (full MVP, later milestones)
+## Phase 5 grounded chat slice — implemented after Phase 4
+
+- Stream answers generated from retrieved source evidence.
+- Check model citation markers against source records before saving clickable citations.
+- Save owner-scoped sessions and complete turns; record provider token usage.
+- Keep chat unavailable when the server Demo AI key is missing while source browsing/search remain usable.
+
+History evidence, impact analysis, BYOK, and broader provider choices were later work at Phase 5.
+
+## Phase 6 recent history and impact slice — implemented after Phase 5
+
+- Store a bounded recent commit window and changed paths from read-only Git.
+- Sync recent public PR and issue summaries; keep source indexing usable if GitHub context fetches fail.
+- Show owner-protected history and file impact based on reverse local imports and recent co-changes.
+- Allow chat to cite matched commits, PRs, and issues as well as source lines.
+
+At Phase 6, full history, PR/issue file linking, richer symbol-level graphs, BYOK, and release validation were still deferred.
+
+## Phase 7 — implemented
+
+- Owner-protected AI settings with AES-256-GCM encrypted keys, model selection, and key removal. OpenAI, Anthropic, Gemini, OpenRouter, and administrator-approved compatible APIs share the streaming provider interface.
+- Packaged Tree-sitter WASM grammars for Python, Go, Rust, Java, C/C++, Ruby, C#, PHP, Kotlin, and Swift; existing JavaScript/TypeScript parsing remains in place.
+- Conservative JavaScript/TypeScript call, construction, and inheritance edges, named/default/namespace import references, tsconfig path mappings, and workspace entry-point resolution. Ambiguous targets stay unresolved.
+- Optional full-branch clones with configurable history count/time limits, paginated commit browsing, changed-file PR metadata, and issue file links from explicit path mentions and linked closing PRs.
+- Shared database request limits, bounded request bodies, mutation-origin checks, queue failure recovery, and serialized index-job creation.
+- Database integration/ownership tests, local browser fixtures, CI Postgres/Redis services, a Vercel project configuration, and a non-root worker container with a deployment guide.
+
+Deployment provisioning and live-account verification depend on the chosen hosting accounts. See [DEPLOYMENT.md](DEPLOYMENT.md). Full runtime dependency inference, incremental snapshot reuse, and issue comments remain enhancements beyond this slice.
+
+## Functional requirements (full MVP)
 
 | ID  | Requirement                                                                           |
 | --- | ------------------------------------------------------------------------------------- |

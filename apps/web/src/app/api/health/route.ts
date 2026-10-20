@@ -5,7 +5,7 @@ import { isAuthConfigured, isDatabaseConfigured } from '@/lib/env';
 export function GET() {
   return NextResponse.json({
     ok: true,
-    milestone: 4,
+    milestone: 7,
     authConfigured: isAuthConfigured(),
     databaseConfigured: isDatabaseConfigured(),
   });

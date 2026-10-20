@@ -1,0 +1,16 @@
+.git
+.vercel
+**/node_modules
+**/.next*
+**/dist
+**/.env*
+**/*.env
+**/*.test.ts
+**/tsconfig.tsbuildinfo
+test-results
+playwright-report
+tests
+.codex
+.agents
+.aws
+supabase/.temp

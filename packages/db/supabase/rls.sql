@@ -98,3 +98,28 @@ CREATE POLICY usage_events_owner ON usage_events
   FOR ALL
   USING (user_id = auth.uid())
   WITH CHECK (user_id = auth.uid());
+
+-- Intelligence rows are protected through their repository owner.
+DO $$
+DECLARE relation_name text;
+BEGIN
+  FOREACH relation_name IN ARRAY ARRAY['repository_snapshots', 'files', 'code_symbols', 'code_chunks', 'documents', 'commits', 'pull_requests', 'issues', 'dependencies'] LOOP
+    EXECUTE format('CREATE POLICY repository_owner ON %I FOR ALL USING (EXISTS (SELECT 1 FROM repositories r WHERE r.id = repository_id AND r.owner_user_id = auth.uid())) WITH CHECK (EXISTS (SELECT 1 FROM repositories r WHERE r.id = repository_id AND r.owner_user_id = auth.uid()))', relation_name);
+  END LOOP;
+END $$;
+
+CREATE POLICY commit_files_owner ON commit_files FOR ALL
+  USING (EXISTS (SELECT 1 FROM commits c JOIN repositories r ON r.id = c.repository_id WHERE c.id = commit_id AND r.owner_user_id = auth.uid()))
+  WITH CHECK (EXISTS (SELECT 1 FROM commits c JOIN repositories r ON r.id = c.repository_id WHERE c.id = commit_id AND r.owner_user_id = auth.uid()));
+
+CREATE POLICY pull_request_files_owner ON pull_request_files FOR ALL
+  USING (EXISTS (SELECT 1 FROM pull_requests p JOIN repositories r ON r.id = p.repository_id WHERE p.id = pull_request_id AND r.owner_user_id = auth.uid()))
+  WITH CHECK (EXISTS (SELECT 1 FROM pull_requests p JOIN repositories r ON r.id = p.repository_id WHERE p.id = pull_request_id AND r.owner_user_id = auth.uid()));
+
+CREATE POLICY issue_comments_owner ON issue_comments FOR ALL
+  USING (EXISTS (SELECT 1 FROM issues i JOIN repositories r ON r.id = i.repository_id WHERE i.id = issue_id AND r.owner_user_id = auth.uid()))
+  WITH CHECK (EXISTS (SELECT 1 FROM issues i JOIN repositories r ON r.id = i.repository_id WHERE i.id = issue_id AND r.owner_user_id = auth.uid()));
+
+-- API keys are written and decrypted by the server only. Never expose even ciphertext
+-- through Supabase's browser-facing API.
+DROP POLICY api_keys_owner ON api_keys;

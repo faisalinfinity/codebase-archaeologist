@@ -13,6 +13,8 @@ export interface CloneOptions {
   destDir: string;
   timeoutMs: number;
   branch?: string;
+  depth?: number;
+  fullHistory?: boolean;
 }
 
 export interface CloneResult extends ParsedGitHubRepo {
@@ -26,10 +28,12 @@ export interface CloneRemoteOptions {
   destDir: string;
   timeoutMs: number;
   branch?: string;
+  depth?: number;
+  fullHistory?: boolean;
   allowFileProtocol?: boolean;
 }
 
-function gitEnv(): NodeJS.ProcessEnv {
+export function gitEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
     GIT_TERMINAL_PROMPT: '0',
@@ -101,12 +105,22 @@ export async function cloneGitRemote(options: CloneRemoteOptions): Promise<{
     '-c',
     'core.fsmonitor=false',
     'clone',
-    '--depth',
-    '1',
     '--single-branch',
     '--no-tags',
     '--no-recurse-submodules',
   ];
+
+  if (!options.fullHistory)
+    args.splice(
+      args.indexOf('--single-branch'),
+      0,
+      '--depth',
+      String(
+        Number.isSafeInteger(options.depth) && (options.depth ?? 0) > 0
+          ? Math.min(options.depth ?? 1, 100_000)
+          : 1,
+      ),
+    );
 
   if (!options.allowFileProtocol) {
     args.unshift('-c', 'protocol.file.allow=never');
@@ -170,6 +184,8 @@ export async function clonePublicGitHubRepo(options: CloneOptions): Promise<Clon
     destDir: options.destDir,
     timeoutMs: options.timeoutMs,
     branch: options.branch,
+    depth: options.depth,
+    fullHistory: options.fullHistory,
     allowFileProtocol: false,
   });
   return {

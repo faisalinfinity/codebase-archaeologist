@@ -45,7 +45,7 @@ export async function applyMigrations(databaseUrl: string): Promise<string[]> {
 }
 
 async function main(): Promise<void> {
-  const url = process.env.DATABASE_URL ?? process.env.DIRECT_DATABASE_URL;
+  const url = process.env.DIRECT_DATABASE_URL ?? process.env.DATABASE_URL;
   if (!url) {
     throw new Error('DATABASE_URL (or DIRECT_DATABASE_URL) is required to migrate.');
   }

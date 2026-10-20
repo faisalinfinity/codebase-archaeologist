@@ -7,6 +7,9 @@ export default tseslint.config(
     ignores: [
       '**/node_modules/**',
       '**/.next/**',
+      '**/.next-e2e/**',
+      '**/test-results/**',
+      '**/playwright-report/**',
       '**/dist/**',
       '**/coverage/**',
       '**/pnpm-lock.yaml',

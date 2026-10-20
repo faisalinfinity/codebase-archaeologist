@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 
-import { requireUser, toPublicError, ValidationError } from '@archaeologist/api';
+import { requireUser, toPublicError, readJsonRequest, assertSameOrigin } from '@archaeologist/api';
 
 import { createRepositoryService } from '@/lib/services';
 import { createRepositoryWriteService } from '@/lib/services-write';
+import { enforceRequestLimit } from '@/lib/request-limit';
 import { getSessionUser } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -22,12 +23,9 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const user = await requireUser(getSessionUser);
-    let json: unknown;
-    try {
-      json = await request.json();
-    } catch {
-      throw new ValidationError('Invalid JSON body.');
-    }
+    assertSameOrigin(request, process.env.NEXT_PUBLIC_APP_URL);
+    await enforceRequestLimit(user.id, 'repository-create', 'MAX_REPOSITORY_REQUESTS_PER_HOUR', 10);
+    const json = await readJsonRequest(request);
     const result = await (await createRepositoryWriteService()).create(user, json);
     return NextResponse.json(
       { ...result.repository, alreadyExists: result.alreadyExists },

@@ -294,7 +294,10 @@ export const commitFiles = pgTable(
     changeType: text('change_type').notNull(),
     metadataJson: jsonb('metadata_json').$type<Record<string, unknown>>(),
   },
-  (table) => [index('commit_files_commit_idx').on(table.commitId)],
+  (table) => [
+    index('commit_files_commit_idx').on(table.commitId),
+    index('commit_files_path_idx').on(table.path, table.commitId),
+  ],
 );
 
 export const pullRequests = pgTable(
@@ -314,7 +317,10 @@ export const pullRequests = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }),
     metadataJson: jsonb('metadata_json').$type<Record<string, unknown>>(),
   },
-  (table) => [uniqueIndex('pull_requests_repo_number_uidx').on(table.repositoryId, table.number)],
+  (table) => [
+    uniqueIndex('pull_requests_repo_number_uidx').on(table.repositoryId, table.number),
+    index('pull_requests_repo_updated_idx').on(table.repositoryId, table.updatedAt),
+  ],
 );
 
 export const pullRequestFiles = pgTable(
@@ -347,7 +353,10 @@ export const issues = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }),
     metadataJson: jsonb('metadata_json').$type<Record<string, unknown>>(),
   },
-  (table) => [uniqueIndex('issues_repo_number_uidx').on(table.repositoryId, table.number)],
+  (table) => [
+    uniqueIndex('issues_repo_number_uidx').on(table.repositoryId, table.number),
+    index('issues_repo_updated_idx').on(table.repositoryId, table.updatedAt),
+  ],
 );
 
 export const issueComments = pgTable(
@@ -405,6 +414,11 @@ export const chatSessions = pgTable(
   (table) => [
     index('chat_sessions_owner_idx').on(table.ownerUserId),
     index('chat_sessions_repo_idx').on(table.repositoryId),
+    index('chat_sessions_owner_repo_updated_idx').on(
+      table.ownerUserId,
+      table.repositoryId,
+      table.updatedAt,
+    ),
   ],
 );
 
@@ -423,7 +437,10 @@ export const chatMessages = pgTable(
     retrievalMetadataJson: jsonb('retrieval_metadata_json').$type<Record<string, unknown>>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('chat_messages_session_idx').on(table.sessionId)],
+  (table) => [
+    index('chat_messages_session_idx').on(table.sessionId),
+    index('chat_messages_session_created_idx').on(table.sessionId, table.createdAt, table.id),
+  ],
 );
 
 export const apiKeys = pgTable(
@@ -438,7 +455,10 @@ export const apiKeys = pgTable(
     keyLastFour: text('key_last_four'),
     ...timestamps,
   },
-  (table) => [index('api_keys_user_idx').on(table.userId)],
+  (table) => [
+    index('api_keys_user_idx').on(table.userId),
+    uniqueIndex('api_keys_user_uidx').on(table.userId),
+  ],
 );
 
 export const aiProviderConfigs = pgTable(
@@ -454,7 +474,10 @@ export const aiProviderConfigs = pgTable(
     isCustom: boolean('is_custom').notNull().default(false),
     ...timestamps,
   },
-  (table) => [index('ai_provider_configs_user_idx').on(table.userId)],
+  (table) => [
+    index('ai_provider_configs_user_idx').on(table.userId),
+    uniqueIndex('ai_provider_configs_user_uidx').on(table.userId),
+  ],
 );
 
 export const usageEvents = pgTable(

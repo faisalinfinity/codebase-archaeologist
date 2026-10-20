@@ -3,7 +3,44 @@ import type {
   IndexJobProgress,
   RepositoryDto,
   SnapshotDto,
+  CommitSummaryDto,
+  PullRequestSummaryDto,
+  IssueSummaryDto,
 } from '@archaeologist/shared';
+
+export interface InsertCommitInput {
+  sha: string;
+  parentSha: string | null;
+  authorName: string | null;
+  committedAt: Date | null;
+  message: string;
+  files: Array<{ path: string; changeType: string }>;
+}
+
+export interface InsertPullRequestInput {
+  files?: Array<{ path: string; changeType: string }>;
+  filesComplete?: boolean;
+  relatedIssues?: number[];
+  number: number;
+  title: string;
+  body: string | null;
+  author: string | null;
+  state: string;
+  createdAt: Date | null;
+  mergedAt: Date | null;
+  updatedAt: Date | null;
+}
+
+export interface InsertIssueInput {
+  filePaths?: string[];
+  number: number;
+  title: string;
+  body: string | null;
+  author: string | null;
+  state: string;
+  createdAt: Date | null;
+  updatedAt: Date | null;
+}
 
 export interface UpsertUserInput {
   id: string;
@@ -78,6 +115,15 @@ export interface InsertFileInput {
   }>;
   chunks: Array<{ content: string; startLine: number; endLine: number }>;
   imports: string[];
+  aliases?: Array<{ pattern: string; targets: string[]; scope?: string }>;
+  references?: Array<{
+    sourceName: string;
+    sourceStartLine: number;
+    targetName: string;
+    targetModule: string | null;
+    line: number;
+    relationshipType: 'calls' | 'constructs' | 'extends';
+  }>;
 }
 
 export interface IndexedFile {
@@ -160,4 +206,27 @@ export interface RepositoryStore {
     vector: number[],
     limit: number,
   ): Promise<SearchCandidate[]>;
+  replaceCommitHistory(repositoryId: string, commits: InsertCommitInput[]): Promise<void>;
+  replacePullRequests(repositoryId: string, pullRequests: InsertPullRequestInput[]): Promise<void>;
+  replaceIssues(repositoryId: string, issues: InsertIssueInput[]): Promise<void>;
+  listCommits(
+    repositoryId: string,
+    limit: number,
+    offset?: number,
+    filePath?: string,
+  ): Promise<CommitSummaryDto[]>;
+  listPullRequests(repositoryId: string, limit: number): Promise<PullRequestSummaryDto[]>;
+  listIssues(repositoryId: string, limit: number): Promise<IssueSummaryDto[]>;
+  listImportEdges(snapshotId: string): Promise<Array<{ sourcePath: string; targetPath: string }>>;
+  listSymbolEdges(snapshotId: string): Promise<SymbolEdge[]>;
+}
+
+export interface SymbolEdge {
+  sourcePath: string;
+  sourceName: string;
+  sourceLine: number;
+  targetPath: string;
+  targetName: string;
+  targetLine: number;
+  relationshipType: string;
 }

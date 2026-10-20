@@ -1,0 +1,14 @@
+.git
+.vercel
+**/node_modules
+**/.next*
+**/.env*
+.env*
+**/*.env
+.aws
+.codex
+.agents
+test-results
+playwright-report
+tests
+supabase/.temp

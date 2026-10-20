@@ -30,6 +30,9 @@ export async function SiteHeader() {
               >
                 Add repository
               </Link>
+              <Link href="/settings/ai" className="hover:text-foreground">
+                AI settings
+              </Link>
               <span className="hidden text-xs sm:inline">{user.email}</span>
               <SignOutButton />
             </>

@@ -16,11 +16,12 @@
     "@archaeologist/ingestion": "workspace:*",
     "@archaeologist/shared": "workspace:*",
     "bullmq": "^5.52.2",
-    "ioredis": "^5.6.1"
+    "ioredis": "^5.6.1",
+    "tsx": "^4.19.3"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
-    "tsx": "^4.19.3",
+    "drizzle-orm": "0.41.0",
     "typescript": "^5.8.2",
     "vitest": "^3.0.9"
   }

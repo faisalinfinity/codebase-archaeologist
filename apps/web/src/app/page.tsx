@@ -39,8 +39,7 @@ export default function HomePage() {
           </h1>
           <p className="mt-6 max-w-2xl text-base leading-relaxed text-muted-foreground md:text-lg">
             Paste a public GitHub URL to index source and docs. Browse files, symbols, and imports,
-            then search the indexed source. History, impact analysis, and AI answers are being
-            built.
+            then search, trace recent changes, inspect possible impact, and ask cited questions.
           </p>
         </div>
         <RepoUrlForm />

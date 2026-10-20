@@ -6,7 +6,9 @@ This is not generic chat-with-code. Answers are grounded in indexed source, Git 
 
 ## Current status
 
-**Phase 4 — source retrieval.** Public repository ingestion stores bounded UTF-8 source, extracts TypeScript/JavaScript symbols and imports, and creates line-aware chunks. Owners can browse and keyword-search their indexed files. Set `OPENAI_API_KEY` on both web and worker to add server-side embeddings and hybrid search. Existing repositories must be re-indexed to populate source and embeddings. Chat and history analysis remain future phases.
+**Phase 7 — personal providers, broader analysis, and release validation.** Owners can index public repositories, browse source, use keyword/hybrid retrieval, ask streamed questions with checked citations, inspect history, and explore file/symbol dependencies. Personal provider settings support OpenAI, Anthropic, Gemini, OpenRouter, and approved compatible endpoints; saved keys use authenticated encryption. The worker parses JavaScript/TypeScript plus eleven additional language grammars. History supports paginated browsing and optional full-branch cloning with processing limits. Database integration tests, ownership-policy checks, browser tests, and a production worker container are included.
+
+Deployment target: **Vercel web + a manually triggered GitHub Actions worker**. See [deployment and verification instructions](docs/DEPLOYMENT.md).
 
 ## Architecture sketch
 
@@ -74,7 +76,7 @@ pnpm install
 cp .env.example apps/web/.env.local
 ```
 
-Fill in `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Keep `DATABASE_URL` and `REDIS_URL` for local Compose.
+Fill in `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Keep `DATABASE_URL` and `REDIS_URL` for local Compose. To enable chat, set `DEMO_AI_API_KEY` in `apps/web/.env.local`; it stays server-side.
 
 Do **not** put `SUPABASE_SERVICE_ROLE_KEY`, `DEMO_AI_API_KEY`, `OPENAI_API_KEY`, `GITHUB_API_TOKEN`, or `ENCRYPTION_KEY` in any `NEXT_PUBLIC_*` variable. To enable semantic search, set `OPENAI_API_KEY` in `apps/web/.env.local` and export it in the worker terminal, then re-index the repository.
 
@@ -130,6 +132,8 @@ pnpm format
 
 See [docs/SECURITY.md](docs/SECURITY.md).
 
-## What is not built yet
+## Current limits
 
-Tree-sitter parsers for additional languages, AI answer generation and chat streaming, BYOK encryption, impact analysis, PR/issue ingestion, and production deploy. See [docs/PRD.md](docs/PRD.md).
+Symbol call relationships are resolved conservatively for JavaScript/TypeScript; other supported languages expose declarations and imports. Computed runtime dependencies, ambiguous symbols, inherited tsconfig settings, and arbitrary build-system aliases can remain unresolved. Git history covers the indexed branch within configured count/time limits. Public GitHub context is bounded; incomplete PR file data is labeled. Incremental snapshot reuse, issue-comment ingestion, and deeper cross-language semantics are future enhancements. Private repositories and team features remain outside the MVP.
+
+Live deployment requires hosted Postgres/Redis, configured Supabase Auth, and the configured GitHub Actions worker secrets. Provider adapters have deterministic streaming tests; verify the chosen model/key in the deployed account.

@@ -5,3 +5,7 @@ build
 coverage
 pnpm-lock.yaml
 *.tsbuildinfo
+
+**/.next-e2e/**
+playwright-report
+test-results

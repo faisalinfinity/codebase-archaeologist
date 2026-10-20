@@ -84,3 +84,46 @@ describe('errorFromCode coverage for github mapping', () => {
     expect(errorFromCode('INDEX_TIMEOUT').status).toBe(504);
   });
 });
+
+describe('GitHub timeline metadata', () => {
+  it('loads public PRs and excludes pull requests from the issues list', async () => {
+    const requested: string[] = [];
+    const client = new GitHubRepoClient({
+      fetchImpl: async (input) => {
+        const url = String(input);
+        requested.push(url);
+        if (url.includes('/pulls?'))
+          return jsonResponse(200, [
+            {
+              number: 7,
+              title: 'Improve auth',
+              body: 'Explains the change',
+              user: { login: 'octocat' },
+              state: 'closed',
+              created_at: '2025-01-01T00:00:00Z',
+              merged_at: '2025-01-02T00:00:00Z',
+              updated_at: '2025-01-02T00:00:00Z',
+            },
+          ]);
+        return jsonResponse(200, [
+          {
+            number: 8,
+            title: 'Auth bug',
+            state: 'open',
+            user: { login: 'tester' },
+            created_at: '2025-01-03T00:00:00Z',
+          },
+          { number: 7, title: 'PR is also issue', state: 'closed', pull_request: { url: 'x' } },
+        ]);
+      },
+    });
+    const prs = await client.getPullRequests('octocat', 'Hello-World');
+    const issues = await client.getIssues('octocat', 'Hello-World');
+    expect(prs).toEqual([expect.objectContaining({ number: 7, author: 'octocat' })]);
+    expect(prs[0]?.mergedAt?.toISOString()).toBe('2025-01-02T00:00:00.000Z');
+    expect(issues).toEqual([expect.objectContaining({ number: 8, title: 'Auth bug' })]);
+    expect(
+      requested.every((url) => url.includes('state=all') && url.includes('per_page=100')),
+    ).toBe(true);
+  });
+});

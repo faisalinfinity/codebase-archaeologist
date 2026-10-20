@@ -1,0 +1,28 @@
+services:
+  worker:
+    build:
+      context: ..
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=1G,mode=1777
+    mem_limit: 2g
+    cpus: 2
+    pids_limit: 128
+    stop_grace_period: 2m
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set the hosted Postgres connection URL}
+      REDIS_URL: ${REDIS_URL:?Set the hosted Redis connection URL}
+      GITHUB_API_TOKEN: ${GITHUB_API_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      HISTORY_MODE: ${HISTORY_MODE:-recent}
+      MAX_HISTORY_COMMITS: ${MAX_HISTORY_COMMITS:-50}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-1}
+      MAX_REPOSITORY_SIZE_MB: ${MAX_REPOSITORY_SIZE_MB:-500}
+      MAX_FILES: ${MAX_FILES:-20000}
+      MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-1}
+      MAX_EMBED_CHUNKS: ${MAX_EMBED_CHUNKS:-2000}
+      NODE_OPTIONS: --max-old-space-size=1536
