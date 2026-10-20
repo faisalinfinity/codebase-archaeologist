@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server';
 
-import { requireUser, toPublicError, readJsonRequest, assertSameOrigin } from '@archaeologist/api';
+import {
+  requireUser,
+  toPublicError,
+  readJsonRequest,
+  assertSameOrigin,
+  publicChatFailure,
+} from '@archaeologist/api';
 
 import { createChatService } from '@/lib/services';
 import { enforceRequestLimit } from '@/lib/request-limit';
@@ -8,7 +14,7 @@ import { getSessionUser } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+export const maxDuration = 180;
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   try {
@@ -32,24 +38,46 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const signal = AbortSignal.any([request.signal, abort.signal]);
     const prepared = await createChatService().prepare(user, id, body, signal);
     const encoder = new TextEncoder();
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
+        controller.enqueue(encoder.encode(': connected\n\n'));
+        heartbeat = setInterval(() => {
+          try {
+            controller.enqueue(encoder.encode(': keep-alive\n\n'));
+          } catch {
+            clearInterval(heartbeat);
+            abort.abort();
+          }
+        }, 15_000);
         void (async () => {
           try {
             for await (const event of prepared.stream()) {
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
             }
-          } catch {
+          } catch (error) {
+            const failure = publicChatFailure(error);
+            if (!signal.aborted)
+              console.error(
+                JSON.stringify({
+                  msg: 'chat_stream_failed',
+                  code: failure.code,
+                  ...('provider' in failure
+                    ? { provider: failure.provider, upstreamStatus: failure.upstreamStatus }
+                    : {}),
+                }),
+              );
             try {
               controller.enqueue(
                 encoder.encode(
-                  `data: ${JSON.stringify({ type: 'error', message: 'AI answer failed. Please try again.' })}\n\n`,
+                  `data: ${JSON.stringify({ type: 'error', code: failure.code, message: failure.message })}\n\n`,
                 ),
               );
             } catch {
               /* Client disconnected. */
             }
           } finally {
+            clearInterval(heartbeat);
             try {
               controller.close();
             } catch {
@@ -59,6 +87,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         })();
       },
       cancel() {
+        clearInterval(heartbeat);
         abort.abort();
       },
     });

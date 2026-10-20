@@ -9,6 +9,7 @@ import { ValidationError } from '../errors';
 import type { AIProvider } from '../chat/ai-provider';
 import { configuredAIProvider } from '../chat/openai-responses-provider';
 import { RoutedAIProvider, type ProviderName } from '../chat/multi-provider';
+import { openRouterModelCatalog } from '../chat/openrouter-models';
 import { KeyVault } from './key-vault';
 import { validateCustomBaseUrl } from './secure-fetch';
 
@@ -171,6 +172,13 @@ export class ProviderSettingsService {
       model: saved.model,
       baseUrl,
       apiKey: new KeyVault(this.env.ENCRYPTION_KEY).decrypt(saved.encryptedKey, userId),
+      openRouterPolicy:
+        saved.provider === 'openrouter'
+          ? await openRouterModelCatalog.policy(
+              saved.model,
+              Number(this.env.MAX_FREE_REASONING_TOKENS ?? 8192),
+            )
+          : undefined,
     });
   }
 }

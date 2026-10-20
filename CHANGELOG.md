@@ -1,5 +1,11 @@
 # Changelog
 
+## OpenRouter reasoning compatibility fix
+
+- Discover reasoning capabilities and choose a supported low effort, including MiniMax M3.1 Flash (free).
+- Reserve a bounded combined token budget for zero-price reasoning models; retain paid-model caps.
+- Keep slow model streams alive and return safe, specific provider errors instead of a generic failure.
+
 ## 0.7.0 — personal providers and release readiness
 
 - Add encrypted personal AI settings and streaming adapters for OpenAI, Anthropic, Gemini, OpenRouter, and approved custom APIs.

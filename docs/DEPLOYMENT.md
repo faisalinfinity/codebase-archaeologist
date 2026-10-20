@@ -38,7 +38,7 @@ Configure these environment variables per deployment environment:
 
 Generate the encryption key with `openssl rand -hex 32` and save it in your secret manager. Keep it across redeployments; changing it requires users to re-enter their personal keys. No encryption or provider secret may use a `NEXT_PUBLIC_` prefix.
 
-Deploy a preview, then verify `/api/health`, sign-in, indexing to READY, source/search, history/impact, and a cited chat answer before promoting to production. Use `corepack pnpm build` locally to validate the production bundle. SSE chat handlers declare a 60-second duration; the selected Vercel plan must support this duration.
+Deploy a preview, then verify `/api/health`, sign-in, indexing to READY, source/search, history/impact, and a cited chat answer before promoting to production. Use `corepack pnpm build` locally to validate the production bundle. SSE chat handlers declare a 180-second duration with a 150-second OpenRouter deadline and periodic stream heartbeats. This fits Vercel Hobby’s 300-second limit with Fluid compute.
 
 ## Manual indexing worker
 
@@ -94,3 +94,9 @@ docker compose -p archaeologist-verify -f tests/docker-compose.verify.yml down
 Browser tests use a local Supabase protocol fixture and an isolated database ending in `_verify`. The application retains its normal authentication and authorization checks. Provider streaming is tested with deterministic HTTP fixtures; live provider and Supabase account checks are still required on the deployed environment.
 
 References: [Vercel monorepos](https://vercel.com/docs/monorepos), [Next.js self-hosting](https://nextjs.org/docs/app/guides/self-hosting).
+
+## OpenRouter reasoning models
+
+The app reads OpenRouter’s public model capabilities without sending a user key or source content. For zero-price `:free` models with reasoning enabled, it chooses the lowest supported effort and keeps reasoning out of the visible answer. For zero-price `:free` reasoning models, a separate combined reasoning/output token budget defaults to 8,192 (`MAX_FREE_REASONING_TOKENS`, capped at 16,384). Paid models retain the normal configured token cap. The selected model ID is preserved and requests never silently fall back to a paid model.
+
+Chat errors identify token exhaustion, invalid keys, rate limits, unavailable models, account limits, or OpenRouter privacy routing restrictions without exposing raw provider messages, prompts, or credentials. Safe error codes are logged for support.
