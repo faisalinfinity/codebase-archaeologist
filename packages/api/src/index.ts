@@ -43,5 +43,6 @@ export {
   DrizzleProviderSettingsStore,
 } from './providers/provider-settings';
 export { RoutedAIProvider } from './chat/multi-provider';
+export { publicChatFailure } from './chat/provider-error';
 export { readJsonRequest, assertSameOrigin } from './http/request';
 export { DatabaseRateLimiter, requestLimit } from './http/rate-limit';
