@@ -34,9 +34,9 @@ jobs:
           --health-cmd "redis-cli ping"
           --health-interval 5s --health-timeout 3s --health-retries 10
     env:
-      NEXT_PUBLIC_APP_URL: http://localhost:3000
-      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key-for-ci
+      NEXT_PUBLIC_APP_URL: http://127.0.0.1:3100
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54391
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: local-browser-test-anon-key
       TEST_DATABASE_URL: postgresql://archaeologist:verification-only@localhost:5432/archaeologist_verify
       TEST_REDIS_URL: redis://localhost:6379
     steps:
