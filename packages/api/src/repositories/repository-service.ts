@@ -7,13 +7,15 @@ import {
   type IndexStatusDto,
   type RepositoryDto,
   type SearchResponseDto,
+  type HistoryResponseDto,
+  type ImpactResponseDto,
 } from '@archaeologist/shared';
 
 import { errorFromCode, ForbiddenError, NotFoundError, ValidationError } from '../errors';
 import { assertPublicSize, type GitHubRepositoryReader } from '../github/github-repo-client';
 import type { IndexJobQueue } from '../queue/index-queue';
 import { normalizeEmbedding, type EmbeddingProvider } from '../embeddings/embedding-provider';
-import { fuseResults, searchSnippet } from './hybrid-ranking';
+import { fuseResults, searchExcerpt } from './hybrid-ranking';
 import type { RepositoryStore } from './repository-store';
 
 const ACTIVE_STAGES = new Set([
@@ -106,10 +108,7 @@ export class RepositoryService {
       language: meta.language,
     });
 
-    await this.queue.enqueueIndex({
-      repositoryId: inserted.repository.id,
-      jobId: inserted.job.id,
-    });
+    await this.enqueue(inserted.repository.id, inserted.job.id);
 
     return { repository: inserted.repository, alreadyExists: false };
   }
@@ -144,12 +143,7 @@ export class RepositoryService {
 
   async getIndexedFile(user: AuthUserDto, id: string, filePath: string) {
     const repository = await this.get(user, id);
-    if (
-      !filePath ||
-      filePath.startsWith('/') ||
-      filePath.split('/').some((part) => part === '..' || part === '.') ||
-      filePath.includes('\0')
-    ) {
+    if (!isSafeFilePath(filePath)) {
       throw new ValidationError('Invalid file path.');
     }
     const snapshot = await this.store.getLatestReadySnapshot(repository.id);
@@ -188,15 +182,16 @@ export class RepositoryService {
         console.warn('[search] Semantic retrieval unavailable.');
       }
     }
-    const results = fuseResults(lexical, semantic).map((candidate) => ({
-      chunkId: candidate.chunkId,
-      filePath: candidate.filePath,
-      startLine: candidate.startLine,
-      endLine: candidate.endLine,
-      snippet: searchSnippet(candidate.content, query),
-      githubUrl: `${repository.githubUrl}/blob/${snapshot.commitSha}/${candidate.filePath.split('/').map(encodeURIComponent).join('/')}#L${candidate.startLine}`,
-      score: candidate.fusedScore,
-    }));
+    const results = fuseResults(lexical, semantic).map((candidate) => {
+      const excerpt = searchExcerpt(candidate.content, query, candidate.startLine);
+      return {
+        chunkId: candidate.chunkId,
+        filePath: candidate.filePath,
+        ...excerpt,
+        githubUrl: `${repository.githubUrl}/blob/${snapshot.commitSha}/${candidate.filePath.split('/').map(encodeURIComponent).join('/')}#L${excerpt.startLine}`,
+        score: candidate.fusedScore,
+      };
+    });
     return {
       repositoryId: id,
       commitSha: snapshot.commitSha,
@@ -205,17 +200,135 @@ export class RepositoryService {
     };
   }
 
+  async getHistory(
+    user: AuthUserDto,
+    id: string,
+    filePath?: string,
+    offset = 0,
+  ): Promise<HistoryResponseDto> {
+    const repository = await this.get(user, id);
+    if (filePath && !isSafeFilePath(filePath)) throw new ValidationError('Invalid file path.');
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100_000)
+      throw new ValidationError('Invalid history offset.');
+    const [allCommits, pullRequests, issues] = await Promise.all([
+      this.store.listCommits(repository.id, 51, offset, filePath),
+      this.store.listPullRequests(repository.id, 50),
+      this.store.listIssues(repository.id, 50),
+    ]);
+    return {
+      repositoryId: repository.id,
+      githubUrl: repository.githubUrl,
+      commits: allCommits.slice(0, 50),
+      nextOffset: allCommits.length > 50 ? offset + 50 : null,
+      pullRequests: filePath
+        ? pullRequests.filter((pr) => pr.files?.some((file) => file.path === filePath))
+        : pullRequests,
+      issues: filePath ? issues.filter((issue) => issue.filePaths?.includes(filePath)) : issues,
+    };
+  }
+
+  async getImpact(
+    user: AuthUserDto,
+    id: string,
+    filePath: string,
+    symbolName?: string,
+  ): Promise<ImpactResponseDto> {
+    const repository = await this.get(user, id);
+    if (!isSafeFilePath(filePath)) throw new ValidationError('Invalid file path.');
+    const snapshot = await this.store.getLatestReadySnapshot(repository.id);
+    if (!snapshot || !(await this.store.getFile(snapshot.id, filePath))) {
+      throw new NotFoundError('File not found in a ready snapshot.');
+    }
+    if (symbolName && symbolName.length > 200) throw new ValidationError('Invalid symbol name.');
+    const [edges, history, symbolEdges] = await Promise.all([
+      this.store.listImportEdges(snapshot.id),
+      this.store.listCommits(repository.id, 50),
+      this.store.listSymbolEdges(snapshot.id),
+    ]);
+    const reverse = new Map<string, Set<string>>();
+    for (const edge of edges) {
+      const sources = reverse.get(edge.targetPath) ?? new Set<string>();
+      sources.add(edge.sourcePath);
+      reverse.set(edge.targetPath, sources);
+    }
+    const dependents: ImpactResponseDto['dependents'] = [];
+    const visited = new Set([filePath]);
+    const queue: Array<{ path: string; distance: number }> = [{ path: filePath, distance: 0 }];
+    for (let i = 0; i < queue.length && dependents.length < 100; i += 1) {
+      const current = queue[i];
+      if (!current || current.distance >= 3) continue;
+      for (const source of reverse.get(current.path) ?? []) {
+        if (visited.has(source)) continue;
+        visited.add(source);
+        const item = { path: source, distance: current.distance + 1 };
+        dependents.push(item);
+        queue.push(item);
+        if (dependents.length >= 100) break;
+      }
+    }
+    const relevant = history.filter((commit) =>
+      commit.files.some((file) => file.path === filePath),
+    );
+    const counts = new Map<string, number>();
+    for (const commit of relevant) {
+      for (const file of commit.files) {
+        if (file.path !== filePath) counts.set(file.path, (counts.get(file.path) ?? 0) + 1);
+      }
+    }
+    return {
+      repositoryId: repository.id,
+      snapshotSha: snapshot.commitSha,
+      path: filePath,
+      dependents,
+      coChanged: [...counts]
+        .map(([path, commitCount]) => ({ path, commitCount }))
+        .sort((a, b) => b.commitCount - a.commitCount || a.path.localeCompare(b.path))
+        .slice(0, 20),
+      commits: relevant.slice(0, 10),
+      graphTruncated: edges.length >= 10_000 || symbolEdges.length >= 10_000,
+      symbolDependents: symbolEdges
+        .filter(
+          (edge) => edge.targetPath === filePath && (!symbolName || edge.targetName === symbolName),
+        )
+        .slice(0, 100)
+        .map((edge) => ({
+          path: edge.sourcePath,
+          name: edge.sourceName,
+          line: edge.sourceLine,
+          targetName: edge.targetName,
+          relationshipType: edge.relationshipType,
+        })),
+    };
+  }
+
   async startIndex(user: AuthUserDto, id: string): Promise<IndexStatusDto> {
     const repository = await this.get(user, id);
     const latest = await this.store.getLatestJob(repository.id);
     if (latest && ACTIVE_STAGES.has(latest.status)) {
+      if (latest.status === 'PENDING') await this.enqueue(repository.id, latest.id);
       return this.getIndexStatus(user, id);
     }
 
     const job = await this.store.createIndexJob(repository.id);
     await this.store.updateRepository(repository.id, { status: 'PENDING' });
-    await this.queue.enqueueIndex({ repositoryId: repository.id, jobId: job.id });
+    await this.enqueue(repository.id, job.id);
     return this.getIndexStatus(user, id);
+  }
+
+  private async enqueue(repositoryId: string, jobId: string): Promise<void> {
+    try {
+      await this.queue.enqueueIndex({ repositoryId, jobId });
+    } catch (error) {
+      await this.store.updateJob(jobId, {
+        status: 'FAILED',
+        stage: 'FAILED',
+        errorCode: 'REDIS_UNAVAILABLE',
+        errorMessage: 'The index queue is unavailable. Retry after Redis is connected.',
+        completedAt: new Date(),
+      });
+      await this.store.updateRepository(repositoryId, { status: 'FAILED' });
+      throw error;
+    }
   }
 
   async delete(user: AuthUserDto, id: string): Promise<void> {
@@ -232,4 +345,13 @@ export class RepositoryService {
       throw new NotFoundError('Repository not found.');
     }
   }
+}
+
+function isSafeFilePath(filePath: string): boolean {
+  return Boolean(
+    filePath &&
+    !filePath.startsWith('/') &&
+    !filePath.includes('\0') &&
+    !filePath.split('/').some((part) => part === '..' || part === '.'),
+  );
 }

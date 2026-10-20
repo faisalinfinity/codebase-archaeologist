@@ -29,6 +29,9 @@ export interface IndexJobProgress {
   filesSkipped?: number;
   filesSeen?: number;
   chunksEmbedded?: number;
+  commitsIndexed?: number;
+  pullRequestsIndexed?: number;
+  issuesIndexed?: number;
   skippedReasons?: Record<string, number>;
 }
 
@@ -85,6 +88,97 @@ export interface SearchResponseDto {
   commitSha: string | null;
   mode: 'lexical' | 'hybrid';
   results: SearchResultDto[];
+}
+
+export interface ChatCitationDto {
+  id: string;
+  kind?: 'source' | 'commit' | 'pull_request' | 'issue';
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  commitSha: string;
+  githubUrl: string;
+}
+
+export interface ChatSessionDto {
+  id: string;
+  repositoryId: string;
+  ownerUserId: string;
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChatMessageDto {
+  id: string;
+  sessionId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  citations: ChatCitationDto[];
+  provider: string | null;
+  model: string | null;
+  tokenUsage: number | null;
+  createdAt: string;
+}
+
+export interface CommitSummaryDto {
+  sha: string;
+  parentSha: string | null;
+  authorName: string | null;
+  committedAt: string | null;
+  message: string;
+  files: Array<{ path: string; changeType: string }>;
+}
+
+export interface PullRequestSummaryDto {
+  files?: Array<{ path: string; changeType: string }>;
+  filesComplete?: boolean;
+  relatedIssues?: number[];
+  number: number;
+  title: string;
+  body: string | null;
+  author: string | null;
+  state: string;
+  createdAt: string | null;
+  mergedAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface IssueSummaryDto {
+  filePaths?: string[];
+  number: number;
+  title: string;
+  body: string | null;
+  author: string | null;
+  state: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface HistoryResponseDto {
+  nextOffset?: number | null;
+  repositoryId: string;
+  githubUrl: string;
+  commits: CommitSummaryDto[];
+  pullRequests: PullRequestSummaryDto[];
+  issues: IssueSummaryDto[];
+}
+
+export interface ImpactResponseDto {
+  repositoryId: string;
+  snapshotSha: string;
+  path: string;
+  dependents: Array<{ path: string; distance: number }>;
+  coChanged: Array<{ path: string; commitCount: number }>;
+  commits: CommitSummaryDto[];
+  graphTruncated: boolean;
+  symbolDependents: Array<{
+    path: string;
+    name: string;
+    line: number;
+    targetName: string;
+    relationshipType: string;
+  }>;
 }
 
 export interface AuthUserDto {

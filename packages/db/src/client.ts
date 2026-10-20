@@ -6,7 +6,20 @@ import * as schema from './schema';
 export type Database = ReturnType<typeof createDatabase>;
 
 export function createDatabase(url: string) {
-  const client = postgres(url, { max: 10 });
+  const defaultMax = process.env.VERCEL ? 1 : 3;
+  const configuredMax = Number(process.env.DATABASE_POOL_MAX ?? defaultMax);
+  // The driver supports max_pipeline at runtime; its published types omit it.
+  const connectionOptions = {
+    max:
+      Number.isSafeInteger(configuredMax) && configuredMax > 0
+        ? Math.min(configuredMax, 20)
+        : defaultMax,
+    prepare: false,
+    max_pipeline: 1,
+    idle_timeout: 20,
+    connect_timeout: 10,
+  };
+  const client = postgres(url, connectionOptions);
   return drizzle(client, { schema });
 }
 

@@ -22,6 +22,14 @@ export {
   type IndexStatusDto,
   type SearchResultDto,
   type SearchResponseDto,
+  type ChatCitationDto,
+  type ChatSessionDto,
+  type ChatMessageDto,
+  type CommitSummaryDto,
+  type PullRequestSummaryDto,
+  type IssueSummaryDto,
+  type HistoryResponseDto,
+  type ImpactResponseDto,
   type AuthUserDto,
 } from './contracts';
 export { errorCodes, errorMessages, type ErrorCode } from './error-codes';

@@ -53,6 +53,20 @@ export default async function IndexedFilePage({
             View on GitHub
           </a>
         </p>
+        <div className="mt-3 flex gap-4 text-sm">
+          <Link
+            className="text-primary hover:underline"
+            href={`/repositories/${id}/history?path=${encodeURIComponent(file.path)}`}
+          >
+            File history
+          </Link>
+          <Link
+            className="text-primary hover:underline"
+            href={`/repositories/${id}/impact?path=${encodeURIComponent(file.path)}`}
+          >
+            Change impact
+          </Link>
+        </div>
       </div>
       {file.symbols.length > 0 ? (
         <section>

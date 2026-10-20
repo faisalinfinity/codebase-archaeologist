@@ -1,4 +1,11 @@
-import type { IndexJobDto, RepositoryDto, SnapshotDto } from '@archaeologist/shared';
+import type {
+  IndexJobDto,
+  RepositoryDto,
+  SnapshotDto,
+  CommitSummaryDto,
+  PullRequestSummaryDto,
+  IssueSummaryDto,
+} from '@archaeologist/shared';
 
 import type {
   IndexJobPatch,
@@ -8,6 +15,9 @@ import type {
   IndexedFile,
   SearchCandidate,
   InsertRepositoryInput,
+  InsertCommitInput,
+  InsertPullRequestInput,
+  InsertIssueInput,
   RepositoryPatch,
   RepositoryStore,
   UpsertSnapshotInput,
@@ -15,6 +25,7 @@ import type {
 } from './repository-store';
 import { assertEmbedding } from '../embeddings/embedding-provider';
 import { resolveImport } from './resolve-import';
+import { buildSymbolEdges } from './symbol-graph';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -47,6 +58,9 @@ export class InMemoryRepositoryStore implements RepositoryStore {
   readonly snapshots = new Map<string, SnapshotDto>();
   readonly files = new Map<string, InsertFileInput[]>();
   readonly chunks = new Map<string, IndexedChunk[]>();
+  readonly history = new Map<string, CommitSummaryDto[]>();
+  readonly pullRequestRows = new Map<string, PullRequestSummaryDto[]>();
+  readonly issueRows = new Map<string, IssueSummaryDto[]>();
 
   async upsertUser(input: UpsertUserInput): Promise<void> {
     this.users.set(input.id, input);
@@ -284,7 +298,12 @@ export class InMemoryRepositoryStore implements RepositoryStore {
       symbols: file.symbols,
       imports: file.imports.map((specifier) => ({
         specifier,
-        targetPath: resolveImport(file.path, specifier, paths),
+        targetPath: resolveImport(
+          file.path,
+          specifier,
+          paths,
+          (this.files.get(snapshotId) ?? []).flatMap((file) => file.aliases ?? []),
+        ),
       })),
     };
   }
@@ -368,5 +387,86 @@ export class InMemoryRepositoryStore implements RepositoryStore {
       })
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
+  }
+
+  async replaceCommitHistory(repositoryId: string, entries: InsertCommitInput[]): Promise<void> {
+    this.history.set(
+      repositoryId,
+      entries.map((entry) => ({
+        sha: entry.sha,
+        parentSha: entry.parentSha,
+        authorName: entry.authorName,
+        committedAt: entry.committedAt?.toISOString() ?? null,
+        message: entry.message,
+        files: entry.files,
+      })),
+    );
+  }
+
+  async replacePullRequests(
+    repositoryId: string,
+    entries: InsertPullRequestInput[],
+  ): Promise<void> {
+    this.pullRequestRows.set(
+      repositoryId,
+      entries.map((item) => ({
+        ...item,
+        createdAt: item.createdAt?.toISOString() ?? null,
+        mergedAt: item.mergedAt?.toISOString() ?? null,
+        updatedAt: item.updatedAt?.toISOString() ?? null,
+      })),
+    );
+  }
+
+  async replaceIssues(repositoryId: string, entries: InsertIssueInput[]): Promise<void> {
+    this.issueRows.set(
+      repositoryId,
+      entries.map((item) => ({
+        ...item,
+        createdAt: item.createdAt?.toISOString() ?? null,
+        updatedAt: item.updatedAt?.toISOString() ?? null,
+      })),
+    );
+  }
+
+  async listCommits(
+    repositoryId: string,
+    limit: number,
+    offset = 0,
+    filePath?: string,
+  ): Promise<CommitSummaryDto[]> {
+    return (this.history.get(repositoryId) ?? [])
+      .filter((commit) => !filePath || commit.files.some((file) => file.path === filePath))
+      .slice(offset, offset + limit);
+  }
+
+  async listPullRequests(repositoryId: string, limit: number): Promise<PullRequestSummaryDto[]> {
+    return (this.pullRequestRows.get(repositoryId) ?? []).slice(0, limit);
+  }
+
+  async listIssues(repositoryId: string, limit: number): Promise<IssueSummaryDto[]> {
+    return (this.issueRows.get(repositoryId) ?? []).slice(0, limit);
+  }
+
+  async listImportEdges(
+    snapshotId: string,
+  ): Promise<Array<{ sourcePath: string; targetPath: string }>> {
+    const indexed = this.files.get(snapshotId) ?? [];
+    const paths = new Set(indexed.map((file) => file.path));
+    return indexed.flatMap((file) =>
+      file.imports.flatMap((specifier) => {
+        const targetPath = resolveImport(
+          file.path,
+          specifier,
+          paths,
+          indexed.flatMap((file) => file.aliases ?? []),
+        );
+        return targetPath ? [{ sourcePath: file.path, targetPath }] : [];
+      }),
+    );
+  }
+
+  async listSymbolEdges(snapshotId: string) {
+    return buildSymbolEdges(this.files.get(snapshotId) ?? []).slice(0, 10_000);
   }
 }

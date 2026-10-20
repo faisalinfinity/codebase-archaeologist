@@ -2,6 +2,23 @@ import { describe, expect, it } from 'vitest';
 
 import { analyzeSource } from './source-analysis';
 
+it('records imported calls but excludes shadowed imports', () => {
+  const analysis = analyzeSource(
+    'src/app.ts',
+    "import { check as verify } from '@/auth';\nexport function handle() { return verify(); }\nexport function shadow(verify: () => void) { return verify(); }",
+  );
+  expect(analysis.references).toEqual([
+    {
+      sourceName: 'handle',
+      sourceStartLine: 2,
+      targetName: 'check',
+      targetModule: '@/auth',
+      line: 2,
+      relationshipType: 'calls',
+    },
+  ]);
+});
+
 describe('analyzeSource', () => {
   it('extracts TypeScript symbols and imports with source line numbers', () => {
     const result = analyzeSource(

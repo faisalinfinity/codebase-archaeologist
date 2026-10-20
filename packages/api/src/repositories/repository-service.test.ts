@@ -276,4 +276,93 @@ describe('RepositoryService', () => {
     expect(hybrid.results).toHaveLength(1);
     expect(hybrid.results[0]?.githubUrl).toContain('/blob/abc123/src/auth.ts#L1');
   });
+
+  it('traces reverse imports and recent co-changes for an owned file', async () => {
+    const { service, store } = createService();
+    const created = await service.create(userA, { githubUrl: 'https://github.com/octocat/impact' });
+    const repositoryId = created.repository.id;
+    const snapshot = await store.upsertSnapshot({
+      repositoryId,
+      commitSha: 'abc123',
+      branch: 'main',
+      status: 'READY',
+      completedAt: new Date(),
+    });
+    const file = (path: string, imports: string[]) => ({
+      repositoryId,
+      snapshotId: snapshot.id,
+      path,
+      language: 'typescript',
+      sizeBytes: 10,
+      sha: 'sha',
+      content: 'export {}',
+      isBinary: false,
+      isGenerated: false,
+      symbols: [],
+      chunks: [],
+      imports,
+    });
+    await store.replaceSnapshotFiles(snapshot.id, [
+      file('src/a.ts', ['./b']),
+      file('src/b.ts', []),
+      file('src/c.ts', ['./a']),
+    ]);
+    await store.replaceCommitHistory(repositoryId, [
+      {
+        sha: 'deadbeef',
+        parentSha: null,
+        authorName: 'Test',
+        committedAt: new Date(),
+        message: 'change authentication',
+        files: [
+          { path: 'src/a.ts', changeType: 'M' },
+          { path: 'src/b.ts', changeType: 'M' },
+        ],
+      },
+    ]);
+    await store.replacePullRequests(repositoryId, [
+      {
+        number: 4,
+        title: 'Improve auth',
+        files: [{ path: 'src/b.ts', changeType: 'M' }],
+        filesComplete: true,
+        body: null,
+        author: 'test',
+        state: 'closed',
+        createdAt: new Date(),
+        mergedAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ]);
+    await store.replaceIssues(repositoryId, [
+      {
+        number: 5,
+        title: 'Auth issue',
+        filePaths: ['src/b.ts'],
+        body: null,
+        author: 'test',
+        state: 'open',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ]);
+
+    const impact = await service.getImpact(userA, repositoryId, 'src/b.ts');
+    expect(impact.dependents).toEqual([
+      { path: 'src/a.ts', distance: 1 },
+      { path: 'src/c.ts', distance: 2 },
+    ]);
+    expect(impact.coChanged).toEqual([{ path: 'src/a.ts', commitCount: 1 }]);
+    expect(impact.commits[0]?.message).toBe('change authentication');
+    const history = await service.getHistory(userA, repositoryId, 'src/b.ts');
+    expect(history.commits).toHaveLength(1);
+    expect(history.pullRequests[0]?.number).toBe(4);
+    expect(history.issues[0]?.number).toBe(5);
+    await expect(service.getImpact(userB, repositoryId, 'src/b.ts')).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+    await expect(service.getImpact(userA, repositoryId, '../.env')).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+  });
 });

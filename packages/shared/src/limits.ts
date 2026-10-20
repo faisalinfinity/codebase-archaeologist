@@ -6,6 +6,9 @@ export interface IngestionLimits {
   scanTimeoutMs: number;
   maxEmbeddingChunks: number;
   embeddingTimeoutMs: number;
+  maxHistoryCommits: number;
+  fullHistory: boolean;
+  historyTimeoutMs: number;
 }
 
 const DEFAULTS: IngestionLimits = {
@@ -16,6 +19,9 @@ const DEFAULTS: IngestionLimits = {
   scanTimeoutMs: 120_000,
   maxEmbeddingChunks: 2_000,
   embeddingTimeoutMs: 600_000,
+  maxHistoryCommits: 50,
+  fullHistory: false,
+  historyTimeoutMs: 120_000,
 };
 
 function readPositiveInt(value: string | undefined, fallback: number): number {
@@ -46,6 +52,15 @@ export function getIngestionLimits(
     scanTimeoutMs: readPositiveInt(env.SCAN_TIMEOUT_MS, DEFAULTS.scanTimeoutMs),
     maxEmbeddingChunks: readPositiveInt(env.MAX_EMBED_CHUNKS, DEFAULTS.maxEmbeddingChunks),
     embeddingTimeoutMs: readPositiveInt(env.EMBED_TIMEOUT_MS, DEFAULTS.embeddingTimeoutMs),
+    maxHistoryCommits: Math.min(
+      100_000,
+      readPositiveInt(
+        env.MAX_HISTORY_COMMITS,
+        env.HISTORY_MODE === 'full' ? 10_000 : DEFAULTS.maxHistoryCommits,
+      ),
+    ),
+    fullHistory: env.HISTORY_MODE === 'full',
+    historyTimeoutMs: readPositiveInt(env.HISTORY_TIMEOUT_MS, DEFAULTS.historyTimeoutMs),
     ...overrides,
   };
 }

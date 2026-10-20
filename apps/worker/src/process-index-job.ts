@@ -3,7 +3,11 @@ import { lstat, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { GitHubRepositoryReader, RepositoryStore } from '@archaeologist/api';
+import type {
+  GitHubRepositoryReader,
+  GitHubTimelineReader,
+  RepositoryStore,
+} from '@archaeologist/api';
 import {
   assertPublicSize,
   embedChunks,
@@ -13,9 +17,10 @@ import {
 } from '@archaeologist/api';
 import {
   cloneGitRemote,
-  analyzeSource,
+  analyzeSourceFile,
   IngestionError,
   isInsideRoot,
+  readGitHistory,
   scanRepositoryTree,
   type CloneOptions,
   type CloneResult,
@@ -31,7 +36,8 @@ export interface ProcessIndexJobDeps {
   store: RepositoryStore;
   clone: (options: CloneOptions) => Promise<CloneResult>;
   scan: typeof scanRepositoryTree;
-  github?: GitHubRepositoryReader;
+  github?: GitHubRepositoryReader & Partial<GitHubTimelineReader>;
+  history?: typeof readGitHistory;
   embeddingProvider?: EmbeddingProvider | null;
   env?: Record<string, string | undefined>;
 }
@@ -142,6 +148,9 @@ export async function processIndexJob(
   if (!repository || !job) {
     throw new Error('Index job or repository is missing.');
   }
+  if (job.repositoryId !== repository.id)
+    throw new Error('Index job does not belong to this repository.');
+  if (job.status === 'READY') return;
   const repositoryId = repository.id;
 
   await deps.store.updateJob(payload.jobId, {
@@ -189,6 +198,8 @@ export async function processIndexJob(
       destDir,
       timeoutMs: limits.cloneTimeoutMs,
       branch: defaultBranch ?? undefined,
+      depth: limits.maxHistoryCommits,
+      fullHistory: limits.fullHistory,
     });
 
     const snapshot = await deps.store.upsertSnapshot({
@@ -231,7 +242,7 @@ export async function processIndexJob(
         const analysis =
           content === null
             ? { symbols: [], chunks: [], imports: [] }
-            : analyzeSource(file.path, content);
+            : await analyzeSourceFile(file.path, content);
         yield {
           repositoryId,
           snapshotId: snapshot.id,
@@ -302,12 +313,65 @@ export async function processIndexJob(
     }
 
     await deps.store.updateJob(payload.jobId, {
+      status: 'GITHUB_SYNC',
+      stage: 'GITHUB_SYNC',
+      progress: {
+        message: 'Indexing commit history and GitHub context.',
+        filesIndexed: scan.filesIndexed,
+        chunksEmbedded,
+      },
+    });
+    const history = deps.history
+      ? await deps.history(cloned.destDir, limits.maxHistoryCommits, limits.historyTimeoutMs)
+      : [];
+    await deps.store.replaceCommitHistory(repository.id, history);
+    let pullRequestsIndexed = 0;
+    let issuesIndexed = 0;
+    let githubContextPartial = false;
+    if (deps.github?.getPullRequests && deps.github?.getIssues) {
+      const [prs, issueRows] = await Promise.allSettled([
+        deps.github.getPullRequests(repository.githubOwner, repository.githubRepo),
+        deps.github.getIssues(repository.githubOwner, repository.githubRepo),
+      ]);
+      if (prs.status === 'fulfilled') {
+        await deps.store.replacePullRequests(repository.id, prs.value);
+        pullRequestsIndexed = prs.value.length;
+      } else githubContextPartial = true;
+      if (issueRows.status === 'fulfilled') {
+        const paths = new Set(indexedFiles.map((file) => file.path));
+        const linked = issueRows.value.map((issue) => {
+          const text = `${issue.title} ${issue.body ?? ''}`;
+          const filePaths = new Set<string>();
+          for (const match of text.matchAll(/[\w@./-]+\.[\w]+/g))
+            if (paths.has(match[0])) filePaths.add(match[0]);
+          if (prs.status === 'fulfilled')
+            for (const pr of prs.value)
+              if (pr.relatedIssues?.includes(issue.number))
+                for (const file of pr.files ?? [])
+                  if (paths.has(file.path)) filePaths.add(file.path);
+          return { ...issue, filePaths: [...filePaths] };
+        });
+        await deps.store.replaceIssues(repository.id, linked);
+        issuesIndexed = issueRows.value.length;
+      } else githubContextPartial = true;
+      if (githubContextPartial)
+        logSafe({
+          event: 'github_context_partial',
+          repository_id: repository.id,
+          job_id: payload.jobId,
+        });
+    }
+
+    await deps.store.updateJob(payload.jobId, {
       status: 'FINALIZING',
       stage: 'FINALIZING',
       progress: {
         message: 'Saving searchable source index.',
         filesIndexed: scan.filesIndexed,
         chunksEmbedded,
+        commitsIndexed: history.length,
+        pullRequestsIndexed,
+        issuesIndexed,
         filesSkipped: scan.filesSkipped,
         filesSeen: scan.filesSeen,
         skippedReasons: scan.skippedReasons,
@@ -330,11 +394,16 @@ export async function processIndexJob(
       errorCode: null,
       errorMessage: null,
       progress: {
-        message: embeddingSkipped
-          ? `Indexed ${scan.filesIndexed} files. Keyword search ready; semantic indexing exceeded the configured chunk limit.`
-          : `Indexed ${scan.filesIndexed} files. ${chunksEmbedded > 0 ? 'Semantic and keyword' : 'Keyword'} search ready.`,
+        message: githubContextPartial
+          ? `Indexed ${scan.filesIndexed} files and ${history.length} commits. Some GitHub context could not be loaded.`
+          : embeddingSkipped
+            ? `Indexed ${scan.filesIndexed} files. Keyword search ready; semantic indexing exceeded the configured chunk limit.`
+            : `Indexed ${scan.filesIndexed} files and ${history.length} commits. ${chunksEmbedded > 0 ? 'Semantic and keyword' : 'Keyword'} search ready.`,
         filesIndexed: scan.filesIndexed,
         chunksEmbedded,
+        commitsIndexed: history.length,
+        pullRequestsIndexed,
+        issuesIndexed,
         filesSkipped: scan.filesSkipped,
         filesSeen: scan.filesSeen,
         skippedReasons: scan.skippedReasons,
@@ -370,6 +439,7 @@ export async function processLocalFixture(
   sourceGitDir: string,
   embeddingProvider?: EmbeddingProvider,
   env?: Record<string, string | undefined>,
+  github?: GitHubRepositoryReader & Partial<GitHubTimelineReader>,
 ): Promise<void> {
   await processIndexJob(payload, {
     store,
@@ -379,6 +449,8 @@ export async function processLocalFixture(
         destDir: options.destDir,
         timeoutMs: options.timeoutMs,
         branch: options.branch,
+        depth: options.depth,
+        fullHistory: options.fullHistory,
         allowFileProtocol: true,
       });
       return {
@@ -390,7 +462,9 @@ export async function processLocalFixture(
       };
     },
     scan: scanRepositoryTree,
+    history: readGitHistory,
     embeddingProvider,
     env,
+    github,
   });
 }

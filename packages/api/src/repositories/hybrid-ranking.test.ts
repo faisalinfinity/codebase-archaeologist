@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { fuseResults, searchSnippet } from './hybrid-ranking';
+import { fuseResults, searchExcerpt } from './hybrid-ranking';
 
 const candidate = (chunkId: string) => ({
   chunkId,
@@ -18,12 +18,24 @@ describe('hybrid ranking', () => {
   });
 
   it('shows matching text near the query', () => {
-    const snippet = searchSnippet(
+    const excerpt = searchExcerpt(
       `${'x'.repeat(500)}authentication works here`,
       'authentication',
+      10,
       100,
     );
-    expect(snippet).toContain('authentication');
-    expect(snippet.startsWith('…')).toBe(true);
+    expect(excerpt.snippet).toContain('authentication');
+    expect(excerpt.snippet.startsWith('…')).toBe(true);
+  });
+
+  it('anchors citations to the displayed source lines', () => {
+    const excerpt = searchExcerpt(
+      `before\n${'x'.repeat(500)}\nauthenticate()\nafter`,
+      'authenticate',
+      20,
+      100,
+    );
+    expect(excerpt.startLine).toBe(21);
+    expect(excerpt.endLine).toBe(23);
   });
 });

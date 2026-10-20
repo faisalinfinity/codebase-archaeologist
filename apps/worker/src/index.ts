@@ -9,7 +9,11 @@ import {
   type IndexJobPayload,
   configuredEmbeddingProvider,
 } from '@archaeologist/api';
-import { clonePublicGitHubRepo, scanRepositoryTree } from '@archaeologist/ingestion';
+import {
+  clonePublicGitHubRepo,
+  readGitHistory,
+  scanRepositoryTree,
+} from '@archaeologist/ingestion';
 
 import { processIndexJob } from './process-index-job';
 
@@ -48,6 +52,7 @@ async function main(): Promise<void> {
         store,
         clone: clonePublicGitHubRepo,
         scan: scanRepositoryTree,
+        history: readGitHistory,
         env: process.env,
         github,
         embeddingProvider: configuredEmbeddingProvider(process.env),
@@ -59,6 +64,10 @@ async function main(): Promise<void> {
       lockDuration: 5 * 60 * 1000,
     },
   );
+
+  worker.on('error', () => {
+    console.error(JSON.stringify({ msg: 'worker_connection_error' }));
+  });
 
   worker.on('failed', (job, error) => {
     console.error(
@@ -72,11 +81,20 @@ async function main(): Promise<void> {
     );
   });
 
+  let closing = false;
   const shutdown = async () => {
+    if (closing) return;
+    closing = true;
     await worker.close();
     await connection.quit();
     process.exit(0);
   };
+
+  if (process.env.WORKER_RUN_ONCE === '1') {
+    worker.once('drained', () => {
+      void shutdown();
+    });
+  }
 
   process.on('SIGINT', () => {
     void shutdown();

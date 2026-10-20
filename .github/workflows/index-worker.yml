@@ -1,0 +1,44 @@
+name: Process indexing queue
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repository-index-worker
+  cancel-in-progress: false
+
+jobs:
+  index:
+    name: Drain queued indexing jobs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.INDEX_DATABASE_URL }}
+      REDIS_URL: ${{ secrets.INDEX_REDIS_URL }}
+      GITHUB_API_TOKEN: ${{ github.token }}
+      OPENAI_API_KEY: ${{ secrets.INDEX_EMBEDDING_KEY }}
+      WORKER_RUN_ONCE: '1'
+      WORKER_CONCURRENCY: '1'
+      NODE_OPTIONS: --max-old-space-size=1536
+    steps:
+      - name: Check connections are configured
+        run: |
+          test -n "$DATABASE_URL" || { echo "Set INDEX_DATABASE_URL in repository Actions secrets."; exit 1; }
+          test -n "$REDIS_URL" || { echo "Set INDEX_REDIS_URL in repository Actions secrets."; exit 1; }
+      - name: Checkout trusted application worker
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 10.33.3
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Install trusted worker dependencies
+        run: pnpm --filter @archaeologist/worker... install --prod --frozen-lockfile
+      - name: Process queue and exit
+        run: pnpm worker
