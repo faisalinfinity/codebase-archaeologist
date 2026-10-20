@@ -9,6 +9,7 @@ out/
 coverage/
 .turbo/
 .vercel/
+/supabase/.temp/
 *.tsbuildinfo
 
 # Environment and secrets

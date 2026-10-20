@@ -1,8 +1,10 @@
 .git
+.vercel
 **/node_modules
 **/.next*
 **/.env*
 .env*
+**/*.env
 .aws
 .codex
 .agents
